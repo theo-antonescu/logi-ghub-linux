@@ -140,11 +140,41 @@ class RGBEffects:
         d = self.dev.call(F.RGB_EFFECTS, 0x5, 0x00)
         return d[1], d[2]
 
+    FLAG_POWER = 0x02
+
     def claim(self) -> None:
+        """Take lighting over from the firmware (what G HUB does while running).
+
+        The device first has to leave its on-board profile: newer keyboards do
+        that through Profile Management (0x8101), mice through 0x8100 host mode.
+        """
+        if self.dev.has(F.PROFILE_MANAGEMENT):
+            self.dev.call(F.PROFILE_MANAGEMENT, 0x6, 0x05)
+        elif self.dev.has(F.ONBOARD_PROFILES):
+            self.dev.call(F.ONBOARD_PROFILES, 0x1, 0x02)
         self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x03, self.FLAG_NVCONFIG)
 
     def release(self) -> None:
         self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x00, 0x00)
+        if self.dev.has(F.PROFILE_MANAGEMENT):
+            self.dev.call(F.PROFILE_MANAGEMENT, 0x6, 0x03)
+        elif self.dev.has(F.ONBOARD_PROFILES):
+            self.dev.call(F.ONBOARD_PROFILES, 0x1, 0x01)
+
+    # Power handling while the host owns the lighting: the firmware reports
+    # user activity (function 1 notifications, data[0] == 0 means idle) and the
+    # host must switch the LEDs off and back on itself.
+    def idle_watch(self) -> None:
+        self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x03, self.FLAG_POWER)
+
+    def power(self, on: bool) -> None:
+        self.dev.call(F.RGB_EFFECTS, 0x8, 0x01, 0x01 if on else 0x03, 0x00)
+
+    def activity(self, msg) -> bool | None:
+        """For an onUserActivity notification return True (active) / False (idle), else None."""
+        if msg.sub_id != self.dev.features.get(F.RGB_EFFECTS) or msg.function != 1 or msg.swid != 0:
+            return None
+        return bool(msg.data[0])
 
     def set_effect(self, zone: int, effect: Effect, persist: bool = True) -> None:
         info = self.zones[zone].effect_by_id(effect.effect_id)

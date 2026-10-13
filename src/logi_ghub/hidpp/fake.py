@@ -271,11 +271,9 @@ class FakeKeyboard(FakeModel):
 
     def f_8081(self, fn, p):
         if fn == 0:
-            bitmap = bytearray(14)
-            if p[1] == 0:
-                for z in range(1, 100):
-                    bitmap[z // 8] |= 1 << (z % 8)
-            return bytes([p[0], p[1]]) + bytes(bitmap)
+            # same zone bitmap as the real G915 X TKL (data/devices/046d-40b6.json)
+            pages = {0: "ffffffffffffffffffffffffffff", 1: "00000000007a0000000000000400", 2: "0000000000000000000000000000"}
+            return bytes([p[0], p[1]]) + bytes.fromhex(pages[p[1]])
         if fn == 1:
             for i in range(0, 16, 4):
                 if p[i]:

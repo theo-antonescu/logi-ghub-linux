@@ -80,9 +80,10 @@ def cmd_probe(args) -> None:
     """Read-only dump of a device's feature table, for adding support for new models."""
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    for dev in _devices(args):
-        if args.device and select_device([dev], args.device) is not dev:
-            continue
+    devices = _devices(args)
+    if args.device:
+        devices = [select_device(devices, args.device)]
+    for dev in devices:
         if not dev.online:
             print(f"skip {dev.name}: {dev.error}")
             continue

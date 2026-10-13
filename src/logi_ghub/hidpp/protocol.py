@@ -24,9 +24,11 @@ from .transport import REPORT_LONG, REPORT_SHORT, REPORT_SIZES
 
 log = logging.getLogger(__name__)
 
-# Software id used to tag our requests; Solaar uses others, so replies to the
-# two programs can be told apart if both are running.
+# Software id used to tag our requests. Every program that has the hidraw node
+# open sees every reply, so the GUI/CLI (0x0B) and the daemon (DAEMON_SW_ID)
+# use different ids, and Solaar uses others again.
 SW_ID = 0x0B
+DAEMON_SW_ID = 0x0C
 
 ERROR_NAMES = {
     0x00: "no error",
@@ -125,8 +127,9 @@ class Device:
     reading and requests wait for the thread to deliver their reply.
     """
 
-    def __init__(self, transport, *, devnumber: int = 0xFF, long_only: bool = False, short_ok: bool = True):
+    def __init__(self, transport, *, devnumber: int = 0xFF, long_only: bool = False, short_ok: bool = True, swid: int = SW_ID):
         self.transport = transport
+        self.swid = swid
         self.devnumber = devnumber
         self.long_only = long_only or not short_ok
         self._lock = threading.RLock()
@@ -179,7 +182,7 @@ class Device:
         return msg.data
 
     def request(self, sub_id: int, function: int, params: bytes = b"", *, timeout: float = 2.0, retries: int = 3) -> bytes:
-        address = (function << 4) | SW_ID
+        address = (function << 4) | self.swid
         packet = self._build(sub_id, address, params)
         for attempt in range(retries + 1):
             with self._lock:
@@ -225,7 +228,7 @@ class Device:
 
     def send_no_reply(self, sub_id: int, function: int, params: bytes = b"") -> None:
         with self._lock:
-            self.transport.write(self._build(sub_id, (function << 4) | SW_ID, params))
+            self.transport.write(self._build(sub_id, (function << 4) | self.swid, params))
 
     # -- notifications -----------------------------------------------------
     def add_handler(self, handler: Callable[[Message], None]) -> None:

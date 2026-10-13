@@ -1,0 +1,356 @@
+{
+  "name": "G915 X LS TKL",
+  "model": "046d:40b6",
+  "kind": "keyboard",
+  "online": true,
+  "protocol": "4.2",
+  "features": [
+    {
+      "index": 0,
+      "id": "0x0000",
+      "name": "ROOT",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 1,
+      "id": "0x0001",
+      "name": "FEATURE_SET",
+      "type": 0,
+      "version": 2
+    },
+    {
+      "index": 2,
+      "id": "0x0003",
+      "name": "DEVICE_FW_VERSION",
+      "type": 0,
+      "version": 6
+    },
+    {
+      "index": 3,
+      "id": "0x0005",
+      "name": "DEVICE_NAME",
+      "type": 0,
+      "version": 5
+    },
+    {
+      "index": 4,
+      "id": "0x1d4b",
+      "name": "WIRELESS_DEVICE_STATUS",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 5,
+      "id": "0x0020",
+      "name": "CONFIG_CHANGE",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 6,
+      "id": "0x0007",
+      "name": "DEVICE_FRIENDLY_NAME",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 7,
+      "id": "0x0011",
+      "name": "PROPERTY_ACCESS",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 8,
+      "id": "0x1004",
+      "name": "UNIFIED_BATTERY",
+      "type": 0,
+      "version": 5
+    },
+    {
+      "index": 9,
+      "id": "0x8071",
+      "name": "RGB_EFFECTS",
+      "type": 0,
+      "version": 4
+    },
+    {
+      "index": 10,
+      "id": "0x8081",
+      "name": "PER_KEY_LIGHTING_V2",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 11,
+      "id": "0x1b10",
+      "name": "CONTROL_LIST",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 12,
+      "id": "0x4523",
+      "name": "KEYBOARD_DISABLE_CONTROLS",
+      "type": 0,
+      "version": 1
+    },
+    {
+      "index": 13,
+      "id": "0x4540",
+      "name": "KEYBOARD_LAYOUT_2",
+      "type": 0,
+      "version": 1
+    },
+    {
+      "index": 14,
+      "id": "0x8040",
+      "name": "BRIGHTNESS_CONTROL",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 15,
+      "id": "0x8101",
+      "name": "PROFILE_MANAGEMENT",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 16,
+      "id": "0x1b05",
+      "name": "FULL_KEY_CUSTOMIZATION",
+      "type": 0,
+      "version": 1
+    },
+    {
+      "index": 17,
+      "id": "0x8051",
+      "name": "LOGI_MODIFIERS",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 18,
+      "id": "0x00d0",
+      "name": "DFU",
+      "type": 0,
+      "version": 3
+    },
+    {
+      "index": 19,
+      "id": "0x1802",
+      "name": "DEVICE_RESET",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 20,
+      "id": "0x1803",
+      "name": "0x1803",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 21,
+      "id": "0x1807",
+      "name": "0x1807",
+      "type": 112,
+      "version": 3
+    },
+    {
+      "index": 22,
+      "id": "0x1817",
+      "name": "0x1817",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 23,
+      "id": "0x1805",
+      "name": "OOBSTATE",
+      "type": 96,
+      "version": 0
+    },
+    {
+      "index": 24,
+      "id": "0x1830",
+      "name": "0x1830",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 25,
+      "id": "0x1890",
+      "name": "0x1890",
+      "type": 104,
+      "version": 9
+    },
+    {
+      "index": 26,
+      "id": "0x1891",
+      "name": "0x1891",
+      "type": 104,
+      "version": 9
+    },
+    {
+      "index": 27,
+      "id": "0x18a1",
+      "name": "0x18a1",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 28,
+      "id": "0x1e00",
+      "name": "0x1e00",
+      "type": 64,
+      "version": 0
+    },
+    {
+      "index": 29,
+      "id": "0x1e02",
+      "name": "0x1e02",
+      "type": 96,
+      "version": 0
+    },
+    {
+      "index": 30,
+      "id": "0x1602",
+      "name": "0x1602",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 31,
+      "id": "0x1eb0",
+      "name": "0x1eb0",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 32,
+      "id": "0x1861",
+      "name": "0x1861",
+      "type": 112,
+      "version": 1
+    },
+    {
+      "index": 33,
+      "id": "0x18b0",
+      "name": "0x18b0",
+      "type": 112,
+      "version": 1
+    },
+    {
+      "index": 34,
+      "id": "0x1801",
+      "name": "0x1801",
+      "type": 112,
+      "version": 0
+    }
+  ],
+  "firmware": [
+    "bootloader BL1 85.00.B0012",
+    "firmware MPK 27.00.B0012"
+  ],
+  "battery": {
+    "percent": 16,
+    "level": "low",
+    "charging": "discharging"
+  },
+  "rgb_zones": [
+    {
+      "zone": 0,
+      "location": 1,
+      "effects": [
+        {
+          "index": 0,
+          "id": 0,
+          "name": "Off",
+          "caps": 0,
+          "period": 0
+        },
+        {
+          "index": 1,
+          "id": 1,
+          "name": "Static",
+          "caps": 0,
+          "period": 0
+        },
+        {
+          "index": 2,
+          "id": 10,
+          "name": "Breathing",
+          "caps": 49153,
+          "period": 7691
+        },
+        {
+          "index": 3,
+          "id": 21,
+          "name": "Color cycle",
+          "caps": 49157,
+          "period": 992
+        },
+        {
+          "index": 4,
+          "id": 22,
+          "name": "Color wave",
+          "caps": 56545,
+          "period": 30
+        },
+        {
+          "index": 5,
+          "id": 23,
+          "name": "Ripple",
+          "caps": 0,
+          "period": 50
+        }
+      ]
+    },
+    {
+      "zone": 1,
+      "location": 2,
+      "effects": [
+        {
+          "index": 0,
+          "id": 0,
+          "name": "Off",
+          "caps": 0,
+          "period": 0
+        },
+        {
+          "index": 1,
+          "id": 1,
+          "name": "Static",
+          "caps": 0,
+          "period": 0
+        },
+        {
+          "index": 2,
+          "id": 10,
+          "name": "Breathing",
+          "caps": 49153,
+          "period": 7691
+        },
+        {
+          "index": 3,
+          "id": 21,
+          "name": "Color cycle",
+          "caps": 49157,
+          "period": 992
+        }
+      ]
+    }
+  ],
+  "raw": {
+    "rgb.info": "ff000200630004080000000000000000",
+    "rgb.sw_control": "00000000000000000000000000000000",
+    "brightness.info": "00640503000000000000000000000000",
+    "brightness.get": "00190000000000000000000000000000",
+    "per_key.info.0": "0000ffffffffffffffffffffffffffff",
+    "per_key.info.1": "000100000000007a0000000000000400",
+    "per_key.info.2": "00020000000000000000000000000000"
+  }
+}

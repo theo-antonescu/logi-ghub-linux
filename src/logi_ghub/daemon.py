@@ -31,6 +31,7 @@ from .features import lighting
 from .features import onboard as ob
 from .features.inputs import bitmask_changes
 from .hidpp import DeviceOffline, HIDPPError, Message
+from .hidpp.protocol import DAEMON_SW_ID
 from .hidpp import features as F
 from .macros import Macro
 from .uinput import VirtualInput
@@ -130,6 +131,9 @@ class Session:
         self.held_codes: dict[int, list[int]] = {}
         self.pressed: dict[int, Action] = {}  # action used at press time, so release matches it
         self.spy = dev.button_spy
+        self.profile_mtime = 0.0
+        self.lighting_claimed = False
+        self.lights_off = False
         self.slots = dev.binding_count() or (self.spy.count if self.spy else 0)
         self.rom: ob.OnboardProfile | None = None
         if dev.onboard:
@@ -161,7 +165,9 @@ class Session:
         light = self.profile.lighting or {}
         rgb = self.dev.rgb
         if rgb and (light.get("zones") or light.get("keys")):
-            rgb.claim()
+            if not self.lighting_claimed:
+                rgb.claim()
+                self.lighting_claimed = True
             for z, eff in (light.get("zones") or {}).items():
                 try:
                     rgb.set_effect(int(z), lighting.Effect.from_dict(eff))
@@ -178,13 +184,29 @@ class Session:
             if self.spy:
                 self.spy.stop()
                 self.spy.set_remapping(self.spy.identity())
-            if dev.rgb and hasattr(dev.rgb, "release") and (self.profile.lighting or {}).get("zones"):
+            if self.lighting_claimed:
                 dev.rgb.release()
-            if dev.onboard:
+                self.lighting_claimed = False
+            elif dev.onboard:
                 dev.onboard.set_mode(ob.MODE_ONBOARD)
         except (HIDPPError, DeviceOffline, TimeoutError, OSError) as e:
             log.info("%s: could not hand back cleanly (%s)", dev.name, e)
         self.release_all_keys()
+
+    def on_activity(self, active: bool) -> None:
+        """Switch LEDs off when the firmware reports the user idle, back on when they return."""
+        rgb = self.dev.rgb
+        if not active and not self.lights_off:
+            rgb.idle_watch()
+            rgb.power(False)
+            self.lights_off = True
+            log.info("%s: idle, lighting off", self.dev.name)
+        elif active and self.lights_off:
+            rgb.power(True)
+            rgb.claim()
+            self.lights_off = False
+            self._apply_lighting()
+            log.info("%s: active, lighting restored", self.dev.name)
 
     def release_all_keys(self) -> None:
         for codes in self.held_codes.values():
@@ -225,6 +247,11 @@ class Session:
                     self.press(i)
                 for i in released:
                     self.release_button(i)
+                return
+        if self.lighting_claimed and isinstance(self.dev.rgb, lighting.RGBEffects):
+            active = self.dev.rgb.activity(msg)
+            if active is not None:
+                self.events.put(("activity", self, active))
                 return
         if self.dev.has(F.WIRELESS_DEVICE_STATUS) and msg.sub_id == self.dev.hidpp.features[F.WIRELESS_DEVICE_STATUS] and msg.swid == 0:
             log.info("%s: reconnected, re-applying profile", self.dev.name)
@@ -297,6 +324,13 @@ class Session:
             self.vinput.wheel(-1 if f in (0x01, 0x10) else 1, horizontal)
 
 
+def _profile_mtime(model_key: str, name: str) -> float:
+    try:
+        return os.stat(profiles.profile_dir(model_key) / f"{profiles._slug(name)}.json").st_mtime
+    except OSError:
+        return 0.0
+
+
 class Daemon:
     def __init__(self, fake: bool = False):
         self.fake = fake
@@ -323,7 +357,7 @@ class Daemon:
         active = profiles.get_active()
         # Drop sessions whose profile was deactivated or changed.
         for key, s in list(self.sessions.items()):
-            if active.get(key) != s.profile.name:
+            if active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
                 self.end(key)
         wanted = {k: v for k, v in active.items() if k not in self.sessions}
         if not wanted:
@@ -335,7 +369,9 @@ class Daemon:
                 continue
             try:
                 profile = profiles.load_profile(dev.key, name)
+                dev.hidpp.swid = DAEMON_SW_ID
                 session = Session(dev, profile, self.events, self.runner, self.vinput)
+                session.profile_mtime = _profile_mtime(dev.key, name)
                 dev.hidpp.add_handler(lambda m, s=session: self.events.put(("msg", s, m)))
                 dev.hidpp.start_listener()
                 session.apply()
@@ -370,6 +406,8 @@ class Daemon:
             try:
                 if item[0] == "msg":
                     item[1].on_message(item[2])
+                elif item[0] == "activity":
+                    item[1].on_activity(item[2])
                 elif item[0] == "reapply":
                     item[1].apply()
                 elif item[0] == "reload":

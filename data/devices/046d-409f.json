@@ -1,0 +1,231 @@
+{
+  "name": "G502 X LIGHTSPEED",
+  "model": "046d:409f",
+  "kind": "mouse",
+  "online": true,
+  "protocol": "4.2",
+  "features": [
+    {
+      "index": 0,
+      "id": "0x0000",
+      "name": "ROOT",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 1,
+      "id": "0x0001",
+      "name": "FEATURE_SET",
+      "type": 0,
+      "version": 2
+    },
+    {
+      "index": 2,
+      "id": "0x0003",
+      "name": "DEVICE_FW_VERSION",
+      "type": 0,
+      "version": 4
+    },
+    {
+      "index": 3,
+      "id": "0x0005",
+      "name": "DEVICE_NAME",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 4,
+      "id": "0x1d4b",
+      "name": "WIRELESS_DEVICE_STATUS",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 5,
+      "id": "0x0020",
+      "name": "CONFIG_CHANGE",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 6,
+      "id": "0x1004",
+      "name": "UNIFIED_BATTERY",
+      "type": 0,
+      "version": 3
+    },
+    {
+      "index": 7,
+      "id": "0x2201",
+      "name": "ADJUSTABLE_DPI",
+      "type": 0,
+      "version": 2
+    },
+    {
+      "index": 8,
+      "id": "0x2121",
+      "name": "HIRES_WHEEL",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 9,
+      "id": "0x8100",
+      "name": "ONBOARD_PROFILES",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 10,
+      "id": "0x8110",
+      "name": "MOUSE_BUTTON_SPY",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 11,
+      "id": "0x8060",
+      "name": "REPORT_RATE",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 12,
+      "id": "0x1500",
+      "name": "FORCE_PAIRING",
+      "type": 0,
+      "version": 0
+    },
+    {
+      "index": 13,
+      "id": "0x1802",
+      "name": "DEVICE_RESET",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 14,
+      "id": "0x1803",
+      "name": "0x1803",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 15,
+      "id": "0x1806",
+      "name": "CONFIG_DEVICE_PROPS",
+      "type": 112,
+      "version": 8
+    },
+    {
+      "index": 16,
+      "id": "0x1811",
+      "name": "0x1811",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 17,
+      "id": "0x1805",
+      "name": "OOBSTATE",
+      "type": 96,
+      "version": 0
+    },
+    {
+      "index": 18,
+      "id": "0x1830",
+      "name": "0x1830",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 19,
+      "id": "0x1875",
+      "name": "0x1875",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 20,
+      "id": "0x1861",
+      "name": "0x1861",
+      "type": 112,
+      "version": 1
+    },
+    {
+      "index": 21,
+      "id": "0x1890",
+      "name": "0x1890",
+      "type": 104,
+      "version": 7
+    },
+    {
+      "index": 22,
+      "id": "0x18a1",
+      "name": "0x18a1",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 23,
+      "id": "0x1801",
+      "name": "0x1801",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 24,
+      "id": "0x1e00",
+      "name": "0x1e00",
+      "type": 64,
+      "version": 0
+    },
+    {
+      "index": 25,
+      "id": "0x1e22",
+      "name": "0x1e22",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 26,
+      "id": "0x1eb0",
+      "name": "0x1eb0",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 27,
+      "id": "0x18b1",
+      "name": "0x18b1",
+      "type": 112,
+      "version": 0
+    },
+    {
+      "index": 28,
+      "id": "0x18c0",
+      "name": "0x18c0",
+      "type": 112,
+      "version": 0
+    }
+  ],
+  "firmware": [
+    "bootloader BL1 48.00.B0014",
+    "firmware MPM 30.00.B0014"
+  ],
+  "battery": {
+    "percent": 44,
+    "level": "good",
+    "charging": "discharging"
+  },
+  "raw": {
+    "dpi.sensor_count": "01000000000000000000000000000000",
+    "dpi.list": "000064e0326400000000000000000000",
+    "dpi.get": "00096006400000000000000000000000",
+    "report_rate.list": "8b000000000000000000000000000000",
+    "onboard.description": "01030105020b1000ff0a040000000000",
+    "onboard.mode": "01000000000000000000000000000000",
+    "onboard.current": "00010000000000000000000000000000",
+    "button_spy.count": "0b000000000000000000000000000000"
+  }
+}
