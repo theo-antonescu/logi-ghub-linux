@@ -10,6 +10,7 @@ from __future__ import annotations
 import collections
 import json
 import struct
+import time
 from pathlib import Path
 
 from . import features as F
@@ -45,6 +46,8 @@ class FakeTransport:
             self.queue.append(bytes([REPORT_LONG, 0x01, 0xFF, sub_id, address, e.code]).ljust(20, b"\x00"))
 
     def read(self, timeout):
+        if not self.queue and timeout:
+            time.sleep(min(timeout, 0.02))
         return self.queue.popleft() if self.queue else None
 
     def notify(self, sub_id: int, function: int, data: bytes) -> None:
