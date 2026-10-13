@@ -33,8 +33,8 @@ run() {
         -drive if=pflash,format=raw,readonly=on,file="$CODE" \
         -drive if=pflash,format=raw,file="$VARS" \
         -chardev socket,id=chrtpm,path="$VM/tpm.sock" -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
-        -device ahci,id=ahci -drive id=disk,file="$DISK",if=none,format=qcow2 -device ide-hd,drive=disk,bus=ahci.0 \
-        -nic user,model=e1000e \
+        -device ahci,id=ahci -drive id=disk,file="$DISK",if=none,format=qcow2 -device ide-hd,drive=disk,bus=ahci.0,bootindex=1 \
+        -netdev user,id=net0 -device e1000e,netdev=net0,romfile= \
         -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0 \
         -vga std -display gtk \
         "$@"
@@ -46,7 +46,7 @@ install)
     mkdir -p "$VM"
     [ -f "$DISK" ] || qemu-img create -f qcow2 "$DISK" 64G
     [ -f "$VARS" ] || cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd "$VARS"
-    run -drive id=cd,file="$ISO",if=none,media=cdrom,readonly=on -device ide-cd,drive=cd,bus=ahci.1 -boot menu=on
+    run -drive id=cd,file="$ISO",if=none,media=cdrom,readonly=on -device ide-cd,drive=cd,bus=ahci.1,bootindex=0
     ;;
 capture)
     vid="${DEVICE%%:*}"; pid="${DEVICE##*:}"
