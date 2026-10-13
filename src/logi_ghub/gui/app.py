@@ -663,10 +663,27 @@ class DevicePane(Gtk.Box):
             row.add_suffix(reset)
             row.connect("activated", lambda _r, n=name: self.edit_key(n))
             g.add(row)
+        blocked = self.key_access_problem()
+        if blocked:
+            warn = Adw.ActionRow(title="Key assignments can't run yet", subtitle=GLib.markup_escape_text(blocked))
+            warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+            g.add(warn)
         if p.key_actions and profiles.get_active().get(self.dev.key) != p.name:
             note = Adw.ActionRow(title="Not running", subtitle="Turn on Host mode for this profile on the Profiles page to use these keys.")
             note.add_prefix(Gtk.Image.new_from_icon_name("dialog-information-symbolic"))
             g.add(note)
+
+    def key_access_problem(self) -> str | None:
+        """Why the service couldn't take over this keyboard's keys, or None."""
+        if str(self.dev.info.path).startswith("fake:"):
+            return None
+        nodes = keyremap.find_event_nodes(self.dev.info.path, self.dev.info.behind_receiver)
+        if not nodes:
+            return "The keyboard's input device wasn't found."
+        if not all(os.access(n.path, os.R_OK | os.W_OK) for n in nodes):
+            return ("This computer doesn't let the service read the keyboard yet. Install the updated device rule once: "
+                    "~/logi-ghub-linux/scripts/install.sh --udev")
+        return None
 
     def edit_key(self, name: str):
         try:
