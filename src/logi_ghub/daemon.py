@@ -8,6 +8,8 @@ activate NAME``) the daemon:
   plain mouse button silent, watches button presses and performs the action
   (keys, media keys, DPI changes, DPI shift, G-Shift layer, macros),
 * claims lighting and applies the profile's effects and per-key colours,
+* for keyboards with key assignments: takes the keyboard's input device and
+  performs the assigned actions (see keyremap.py),
 * re-applies everything when the device reconnects after sleep, and hands the
   device back to its on-board profile when it exits.
 
@@ -24,7 +26,7 @@ import signal
 import threading
 import time
 
-from . import keys, lightfx, profiles
+from . import keyremap, keys, lightfx, profiles
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -142,6 +144,8 @@ class Session:
         self.lighting_claimed = False
         self.lights_off = False
         self.animator: lightfx.Animator | None = None
+        self.remapper: keyremap.KeyRemapper | None = None
+        self.keys_warned = False
         self.slots = dev.binding_count() or (self.spy.count if self.spy else 0)
         self.rom: ob.OnboardProfile | None = None
         if dev.onboard:
@@ -167,7 +171,40 @@ class Session:
             self.spy.set_remapping(self._remap_table())
             self.spy.start()
         self._apply_lighting()
+        self.ensure_keys()
         log.info("%s: profile '%s' applied in host mode", dev.name, p.name)
+
+    def ensure_keys(self) -> None:
+        """Start key remapping if the profile has key assignments and it isn't running (again after a reconnect)."""
+        if not self.profile.key_actions or self.vinput is None or getattr(self.dev, "fake_model", None) is not None:
+            return
+        if self.remapper is not None and (self.remapper.running or self.remapper.panicked):
+            return  # after the escape keys, stay off until the profile is saved or activated again
+        mapping = keyremap.resolve(self.profile.key_actions)
+        if not mapping:
+            return
+        info = self.dev.info
+        nodes = keyremap.find_event_nodes(info.path, info.behind_receiver)
+        if not nodes:
+            self._keys_problem("no keyboard input device found next to %s; key assignments not active", info.path)
+            return
+        remapper = keyremap.KeyRemapper(self.dev.name, nodes, mapping, pointer=self.vinput, runner=self.runner,
+                                        macros={m.name: m for m in self.profile.macros}, tag=f"{self.dev.key}:keys")
+        try:
+            remapper.start()
+        except PermissionError as e:
+            self._keys_problem("cannot open the keyboard's input device (%s); reinstall the udev rule "
+                               "(scripts/install.sh --udev) for key assignments", e)
+            return
+        except OSError as e:
+            self._keys_problem("key assignments not active: %s", e)
+            return
+        self.remapper = remapper
+
+    def _keys_problem(self, msg: str, *args) -> None:
+        """ensure_keys runs again on every rescan; say what's wrong once."""
+        (log.debug if self.keys_warned else log.warning)("%s: " + msg, self.dev.name, *args)
+        self.keys_warned = True
 
     def _apply_lighting(self) -> None:
         light = self.profile.lighting or {}
@@ -182,6 +219,9 @@ class Session:
 
     def release(self) -> None:
         dev = self.dev
+        if self.remapper is not None:
+            self.remapper.stop()
+            self.remapper = None
         try:
             if self.spy:
                 self.spy.stop()
@@ -367,6 +407,8 @@ class Daemon:
         for key, s in list(self.sessions.items()):
             if active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
                 self.end(key)
+        for s in self.sessions.values():
+            s.ensure_keys()
         wanted = {k: v for k, v in active.items() if k not in self.sessions}
         if not wanted:
             return

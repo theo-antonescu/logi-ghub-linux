@@ -126,6 +126,7 @@ MOUSE_BUTTONS = {
 
 # evdev relative axes and event types used by the uinput device
 EV_SYN, EV_KEY, EV_REL = 0x00, 0x01, 0x02
+EV_MSC, EV_LED, EV_REP = 0x04, 0x11, 0x14
 REL_X, REL_Y, REL_HWHEEL, REL_WHEEL = 0x00, 0x01, 0x06, 0x08
 REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES = 0x0B, 0x0C
 

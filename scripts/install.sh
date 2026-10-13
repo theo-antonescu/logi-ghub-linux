@@ -43,6 +43,7 @@ if [ "${1:-}" = "--udev" ]; then
     sudo udevadm control --reload
     sudo udevadm trigger --action=add --subsystem-match=hidraw
     sudo udevadm trigger --action=add --subsystem-match=misc --sysname-match=uinput
+    sudo udevadm trigger --action=change --subsystem-match=input --sysname-match='event*'
 fi
 
 echo "Installed. Start \"Logitech G devices\" from the app menu, or run logi-ghub / logi-ghub-cli."
