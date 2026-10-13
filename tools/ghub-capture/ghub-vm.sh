@@ -28,13 +28,15 @@ tpm() {
 
 run() {
     tpm
+    # GHUB_VM_NONET=1 starts Windows without network (lets setup skip the Microsoft account)
+    if [ "${GHUB_VM_NONET:-0}" = 1 ]; then NET="-nic none"; else NET="-netdev user,id=net0 -device e1000e,netdev=net0,romfile="; fi
     exec qemu-system-x86_64 \
         -name "G HUB capture VM" -machine q35,accel=kvm -cpu host -smp 4 -m 8G \
         -drive if=pflash,format=raw,readonly=on,file="$CODE" \
         -drive if=pflash,format=raw,file="$VARS" \
         -chardev socket,id=chrtpm,path="$VM/tpm.sock" -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0 \
         -device ahci,id=ahci -drive id=disk,file="$DISK",if=none,format=qcow2 -device ide-hd,drive=disk,bus=ahci.0,bootindex=1 \
-        -netdev user,id=net0 -device e1000e,netdev=net0,romfile= \
+        $NET \
         -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0 \
         -vga std -display gtk \
         "$@"
