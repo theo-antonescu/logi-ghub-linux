@@ -66,8 +66,8 @@ def cmd_info(args) -> None:
             "active_profile": o.get_current_profile(),
             "profiles": o.info.profile_count,
             "buttons": o.info.button_count,
-            "sector_size": o.info.sector_size,
-            "format": o.info.profile_format,
+            "sector_size": getattr(o.info, "sector_size", None),
+            "format": getattr(o.info, "profile_format", None),
         }
     if dev.rgb:
         info["lighting_zones"] = [{"zone": z.index, "location": z.name, "effects": [e.name for e in z.effects]} for z in dev.rgb.zones]
@@ -84,8 +84,8 @@ def cmd_probe(args) -> None:
     if args.device:
         devices = [select_device(devices, args.device)]
     for dev in devices:
-        if not dev.online:
-            print(f"skip {dev.name}: {dev.error}")
+        if not dev.online or dev.hidpp is None:
+            print(f"skip {dev.name}: {dev.error or 'not a HID++ device'}")
             continue
         h = dev.hidpp
         data = dev.describe()

@@ -19,7 +19,7 @@ KIND_LABELS = [
     ("special", "Device function"),
     ("macro", "Macro"),
 ]
-REPEAT_LABELS = {"once": "Play once", "while_held": "Repeat while held", "toggle": "Toggle repeat on press"}
+REPEAT_LABELS = {"once": "Play once", "while_held": "Repeat while the button is held", "toggle": "Repeat until pressed again"}
 
 
 def _string_list(items: list[str]) -> Gtk.StringList:
@@ -231,6 +231,20 @@ class MacroDialog(Adw.Dialog):
         self.repeat_row = Adw.ComboRow(title="When the button is pressed", model=_string_list([REPEAT_LABELS[m] for m in REPEAT_MODES]))
         self.repeat_row.set_selected(REPEAT_MODES.index(macro.repeat) if macro else 0)
         group.add(self.repeat_row)
+        self.hold_row = Adw.EntryRow(title="Keys held down the whole time (e.g. Alt or Ctrl+Shift)",
+                                     text="+".join(keys.MODIFIER_LABELS[keys.MODIFIERS.index(k)] if k in keys.MODIFIERS else k
+                                                   for k in (macro.hold if macro else [])))
+        self.hold_row.connect("changed", lambda *_: self._validate())
+        group.add(self.hold_row)
+        self.interval_row = Adw.SpinRow.new_with_range(0, 60000, 50)
+        self.interval_row.set_title("Wait between repeats (ms)")
+        self.interval_row.set_value(macro.interval_ms if macro else 0)
+        group.add(self.interval_row)
+        self.host_note = Gtk.Label(xalign=0, wrap=True, label="Repeating or holding keys is done by the computer: "
+                                   "run the profile in host mode (on-board memory can only play a macro once).")
+        self.host_note.add_css_class("dim-label")
+        group.add(self.host_note)
+        self.repeat_row.connect("notify::selected", lambda *_: self._sync_repeat())
 
         steps_group = Adw.PreferencesGroup(
             title="Steps",
@@ -253,6 +267,7 @@ class MacroDialog(Adw.Dialog):
         self.delays = Adw.SwitchRow(title="Record delays between keys", active=True)
         steps_group.add(self.delays)
         page.add(steps_group)
+        self._sync_repeat()
         toolbar.set_content(page)
         self.set_child(toolbar)
 
@@ -297,10 +312,17 @@ class MacroDialog(Adw.Dialog):
     def _key_up(self, ctl, keyval, keycode, state):
         self._key(ctl, keyval, keycode, state, down=False)
 
+    def _sync_repeat(self):
+        repeating = REPEAT_MODES[self.repeat_row.get_selected()] != "once"
+        self.interval_row.set_visible(repeating)
+        self._validate()
+
     def _macro(self) -> Macro:
         buf = self.text.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
-        return Macro.parse(self.name_row.get_text().strip(), text, REPEAT_MODES[self.repeat_row.get_selected()])
+        repeat = REPEAT_MODES[self.repeat_row.get_selected()]
+        return Macro.parse(self.name_row.get_text().strip(), text, repeat, self.hold_row.get_text().strip(),
+                           int(self.interval_row.get_value()) if repeat != "once" else 0)
 
     def _validate(self):
         try:
@@ -313,6 +335,7 @@ class MacroDialog(Adw.Dialog):
                 raise ValueError("add at least one step")
             self.error.set_text("")
             self.ok.set_sensitive(True)
+            self.host_note.set_visible(m.needs_host)
         except ValueError as e:
             self.error.set_text(str(e))
             self.ok.set_sensitive(False)

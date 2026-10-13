@@ -180,7 +180,9 @@ class LogiDevice:
 
 
 def find_devices(open_them: bool = True) -> list[LogiDevice]:
-    devs = [LogiDevice(i) for i in enumerate_hidpp()]
+    from .features.g600 import G600Device, enumerate_g600
+
+    devs = [LogiDevice(i) for i in enumerate_hidpp()] + [G600Device(i) for i in enumerate_g600()]
     if open_them:
         for d in devs:
             try:

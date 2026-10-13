@@ -313,10 +313,11 @@ class DevicePane(Gtk.Box):
         for prof in stored:
             row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name),
                                 subtitle=f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros")
-            sw = Gtk.Switch(active=prof.name == active, valign=Gtk.Align.CENTER, tooltip_text="Run in host mode")
-            sw.connect("notify::active", lambda s, _p, n=prof.name: self.set_host(n if s.get_active() else None))
-            row.add_suffix(Gtk.Label(label="Host mode", css_classes=["dim-label"]))
-            row.add_suffix(sw)
+            if dev.hidpp is not None:  # host mode needs HID++ (not available on the G600)
+                sw = Gtk.Switch(active=prof.name == active, valign=Gtk.Align.CENTER, tooltip_text="Run in host mode")
+                sw.connect("notify::active", lambda s, _p, n=prof.name: self.set_host(n if s.get_active() else None))
+                row.add_suffix(Gtk.Label(label="Host mode", css_classes=["dim-label"]))
+                row.add_suffix(sw)
             menu = Gio.Menu()
             for p in self.slots:
                 menu.append(f"Write to on-board slot {p.sector}", f"pane.write-slot::{prof.name}\x1f{p.sector}")
@@ -500,9 +501,10 @@ class DevicePane(Gtk.Box):
         p = self.profile
         lo, hi = (self.dpi_values[0], self.dpi_values[-1]) if self.dpi_values else (100, 25600)
         step = (self.dpi_values[1] - self.dpi_values[0]) if len(self.dpi_values) > 1 else 50
-        g = self.add_group("dpi", Adw.PreferencesGroup(title="DPI stages", description=f"Up to 5 stages, {lo}–{hi} DPI. "
+        max_stages = 4 if self.slots and hasattr(self.slots[0], "max_dpi_stages") else 5
+        g = self.add_group("dpi", Adw.PreferencesGroup(title="DPI stages", description=f"Up to {max_stages} stages, {lo}–{hi} DPI. "
                                                        "The DPI buttons step through these."))
-        add = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Add a stage", sensitive=len(p.dpi_stages) < 5)
+        add = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Add a stage", sensitive=len(p.dpi_stages) < max_stages)
         add.connect("clicked", lambda *_: self._dpi_add())
         g.set_header_suffix(add)
         first_check = None
@@ -620,7 +622,7 @@ class DevicePane(Gtk.Box):
     def build_macros(self):
         self.page_reset("macros")
         p = self.profile
-        visible = bool(p and self.dev.binding_count())
+        visible = bool(p and self.dev.binding_count() and self.dev.hidpp is not None)  # G600: no macro support
         self.stack.get_page(self.pages["macros"]).set_visible(visible)
         if not visible:
             return
@@ -678,11 +680,14 @@ class DevicePane(Gtk.Box):
         self.page_reset("lighting")
         self._stop_preview()
         dev, p = self.dev, self.profile
-        visible = bool(p and (dev.rgb or dev.per_key or dev.brightness))
+        visible = bool(p and (dev.rgb or dev.per_key or dev.brightness or "led" in p.lighting))
         self.stack.get_page(self.pages["lighting"]).set_visible(visible)
         if not visible:
             return
         light = p.lighting
+        if "led" in light and not dev.rgb:
+            self._profile_led_group(light["led"])
+            return
         light.setdefault("zones", {})
 
         g = self.add_group("lighting", Adw.PreferencesGroup(title="Lighting", description=self._lighting_state_text()))
@@ -713,6 +718,49 @@ class DevicePane(Gtk.Box):
         for zone in (dev.rgb.zones if dev.rgb else []):
             self._zone_group(zone, light["zones"])
         self._start_preview()
+
+    def _profile_led_group(self, led: dict):
+        """Mice that keep their lighting inside each on-board profile (G600)."""
+        from ..features.g600 import LED_EFFECTS
+
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Mouse lighting", description="Saved with this profile; it shows on the mouse once the profile is saved."))
+        effects = list(LED_EFFECTS)
+        combo = Adw.ComboRow(title="Effect", model=Gtk.StringList.new([LED_EFFECTS[e] for e in effects] + ["Off"]))
+        off = led.get("color", 0) == 0 and led.get("effect") == 0
+        combo.set_selected(len(effects) if off else effects.index(led.get("effect", 0)) if led.get("effect", 0) in effects else 0)
+        g.add(combo)
+        color_row = Adw.ActionRow(title="Colour")
+        color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
+        color_btn.set_rgba(int_to_rgba(led.get("color", 0xFFFFFF) or 0xFFFFFF))
+        color_row.add_suffix(color_btn)
+        g.add(color_row)
+        duration = Adw.SpinRow.new_with_range(1, 15, 1)
+        duration.set_title("Effect speed (seconds)")
+        duration.set_value(led.get("duration", 4) or 4)
+        g.add(duration)
+        gshift_row = Adw.ActionRow(title="Colour while G-Shift is held")
+        gshift_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
+        gshift_btn.set_rgba(int_to_rgba(led.get("gshift_color", 0xFFFFFF)))
+        gshift_row.add_suffix(gshift_btn)
+        g.add(gshift_row)
+
+        def changed(*_):
+            i = combo.get_selected()
+            is_off = i >= len(effects)
+            led["effect"] = 0 if is_off else effects[i]
+            led["color"] = 0 if is_off else rgba_to_int(color_btn.get_rgba())
+            led["duration"] = int(duration.get_value())
+            led["gshift_color"] = rgba_to_int(gshift_btn.get_rgba())
+            color_row.set_sensitive(not is_off)
+            duration.set_sensitive(not is_off and led["effect"] != 0)
+            self.mark_dirty()
+
+        changed_quiet = changed
+        color_row.set_sensitive(not off)
+        duration.set_sensitive(not off and led.get("effect", 0) != 0)
+        for w, sig in ((combo, "notify::selected"), (color_btn, "notify::rgba"), (duration, "notify::value"), (gshift_btn, "notify::rgba")):
+            w.connect(sig, changed_quiet)
 
     def _lighting_state_text(self) -> str:
         if self.light_state == "service":

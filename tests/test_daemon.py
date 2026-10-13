@@ -93,3 +93,21 @@ def test_macro_runs():
     spy(s, mouse, 0)
     time.sleep(0.1)
     assert vin.events == [(35, True), (35, False), (23, True), (23, False)]
+
+
+def test_hold_alt_and_repeat_tab_while_held():
+    import time
+
+    m = Macro.parse("switcher", "Tab", repeat="while_held", hold="Alt", interval_ms=100)
+    s, mouse, vin = session({"buttons": {3: Action.run_macro("switcher")}, "macros": [m]})
+    collect(s, mouse)
+    spy(s, mouse, 1 << 3)
+    time.sleep(0.35)
+    spy(s, mouse, 0)
+    time.sleep(0.15)
+    ev = vin.events
+    assert ev[0] == (56, True)  # Alt down first
+    assert ev[-1] == (56, False)  # and released last
+    tabs = [e for e in ev if e == (15, True)]
+    assert 2 <= len(tabs) <= 5  # Tab tapped every ~100 ms while held
+    assert all(e[0] in (15, 56) for e in ev)

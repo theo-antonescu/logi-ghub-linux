@@ -81,6 +81,10 @@ class Profile:
             shift_dpi=p.dpis[p.shift_dpi_index] if p.shift_dpi_index < 5 and p.dpis[p.shift_dpi_index] not in (0, 0xFFFF) else 400,
             report_rate=1000 // max(1, p.report_rate_ms),
         )
+        if hasattr(p, "shift_dpi"):  # devices that store the DPI shift as a value (G600)
+            prof.shift_dpi = p.shift_dpi
+        if hasattr(p, "led"):
+            prof.lighting["led"] = p.led
         for gshift, target in ((False, prof.buttons), (True, prof.gshift_buttons)):
             for i in range(slots):
                 a = p.button(i, gshift)
@@ -100,17 +104,22 @@ class Profile:
     def to_onboard(self, base: ob.OnboardProfile, slots: int) -> ob.OnboardProfile:
         """Overlay this profile on ``base`` (keeps lighting and unknown bytes). Macros must be placed first."""
         p = base.copy()
-        stages = [int(d) for d in self.dpi_stages][:5]
+        stages = [int(d) for d in self.dpi_stages][: getattr(p, "max_dpi_stages", 5)]
         if not stages:
             raise ValueError("profile needs at least one DPI stage")
         p.dpis = stages
         p.default_dpi_index = min(self.default_dpi, len(stages) - 1)
-        if self.shift_dpi:
+        if hasattr(p, "set_shift_dpi"):
+            p.set_shift_dpi(self.shift_dpi)
+        elif self.shift_dpi:
             # On-board memory stores DPI shift as an index into the stages.
             if self.shift_dpi not in stages:
                 raise ValueError(f"DPI shift {self.shift_dpi} must be one of the DPI stages {stages} for an on-board profile")
             p.shift_dpi_index = stages.index(self.shift_dpi)
         p.report_rate_ms = max(1, round(1000 / self.report_rate))
+        led = self.lighting.get("led")
+        if led and hasattr(p, "set_led"):
+            p.set_led(int(led["effect"]), int(led["color"]), int(led.get("duration", 4)), led.get("gshift_color"))
         p.name = self.name[:24]
         for gshift, source in ((False, self.buttons), (True, self.gshift_buttons)):
             for i, action in source.items():
@@ -142,6 +151,11 @@ def write_to_onboard(memory: ob.OnboardProfiles, profile: Profile, slot: int, sl
                 macro = profile.macro(action.macro)
                 if macro is None:
                     raise ValueError(f"button {i + 1} uses unknown macro {action.macro!r}")
+                if not getattr(memory.info, "supports_macros", True):
+                    raise ValueError("this mouse has no on-board macro memory")
+                if macro.needs_host:
+                    raise ValueError(f"macro '{macro.name}' repeats or holds keys, which on-board memory can't do; "
+                                     "run this profile in host mode instead")
                 if not free:
                     raise ValueError("no free on-board sectors left for macros")
                 sector = free.pop(0)

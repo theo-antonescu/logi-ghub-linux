@@ -90,12 +90,19 @@ class MacroRunner:
             self._running[key] = stop
 
         def run():
+            held: list[int] = []
             try:
+                for name in macro.hold:  # e.g. Alt stays down while Tab repeats
+                    self._key(keys.HID_TO_EVDEV[keys.hid_for(name)], True, held)
                 while True:
                     self._play_once(macro, stop)
                     if macro.repeat == "once" or stop.is_set():
                         break
+                    if macro.interval_ms and stop.wait(macro.interval_ms / 1000):
+                        break
             finally:
+                for code in reversed(held):
+                    self._key(code, False, [])
                 with self._lock:
                     if self._running.get(key) is stop:
                         del self._running[key]
@@ -366,6 +373,10 @@ class Daemon:
         for dev in self._devices():
             name = wanted.get(dev.key)
             if not name or not dev.online:
+                dev.close()
+                continue
+            if dev.hidpp is None:
+                log.warning("%s: host mode is not supported on this device; it keeps its on-board profiles", dev.name)
                 dev.close()
                 continue
             try:

@@ -115,19 +115,32 @@ class Macro:
     name: str
     steps: list[Step] = field(default_factory=list)
     repeat: str = "once"
+    hold: list[str] = field(default_factory=list)  # keys held down for as long as the macro runs, e.g. ["LeftAlt"]
+    interval_ms: int = 0  # pause between repeats
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "repeat": self.repeat, "steps": [s.to_dict() for s in self.steps]}
+        d = {"name": self.name, "repeat": self.repeat, "steps": [s.to_dict() for s in self.steps]}
+        if self.hold:
+            d["hold"] = list(self.hold)
+        if self.interval_ms:
+            d["interval_ms"] = self.interval_ms
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Macro":
-        return cls(d["name"], [Step.from_dict(s) for s in d.get("steps", [])], d.get("repeat", "once"))
+        return cls(d["name"], [Step.from_dict(s) for s in d.get("steps", [])], d.get("repeat", "once"),
+                   list(d.get("hold", [])), int(d.get("interval_ms", 0)))
+
+    @property
+    def needs_host(self) -> bool:
+        """True when the device can't play it from on-board memory."""
+        return self.repeat != "once" or bool(self.hold)
 
     def to_text(self) -> str:
         return ", ".join(str(s) for s in self.steps)
 
     @classmethod
-    def parse(cls, name: str, text: str, repeat: str = "once") -> "Macro":
+    def parse(cls, name: str, text: str, repeat: str = "once", hold: str | list[str] = "", interval_ms: int = 0) -> "Macro":
         steps: list[Step] = []
         for token in _split(text):
             t = token.strip()
@@ -152,7 +165,9 @@ class Macro:
                 steps.append(Step("tap", key="+".join(mods + [key])))
         if repeat not in REPEAT_MODES:
             raise ValueError(f"repeat must be one of {REPEAT_MODES}")
-        return cls(name, steps, repeat)
+        if isinstance(hold, str):
+            hold = [resolve_key(k) for k in hold.split("+") if k.strip()]
+        return cls(name, steps, repeat, hold, int(interval_ms))
 
     # -- expansion into primitive events ------------------------------------
     def events(self) -> list[tuple[str, object]]:

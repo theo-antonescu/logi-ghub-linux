@@ -6,7 +6,8 @@ and the profiles stored in the device's on-board memory. It ships a GTK 4 /
 libadwaita app, a command-line tool and a small background service.
 
 Developed and tested on Ubuntu 26.04 with a **G502 X LIGHTSPEED** mouse and a
-**G915 X LIGHTSPEED TKL** keyboard, each on its own Lightspeed receiver.
+**G915 X LIGHTSPEED TKL** keyboard (each on its own Lightspeed receiver or by
+USB cable), and a corded **G600** MMO mouse.
 
 | | G502 X LIGHTSPEED | G915 X LIGHTSPEED TKL |
 |---|---|---|
@@ -16,6 +17,12 @@ Developed and tested on Ubuntu 26.04 with a **G502 X LIGHTSPEED** mouse and a
 | Macros | host mode (played by the service, with repeat modes); on-board is experimental | not yet |
 | Lighting: zone effects, per-key colours, brightness, your own colour sequences | the LIGHTSPEED model has no RGB | yes, host mode |
 | On-board profile slots: read, edit, enable, switch, back up, restore | yes | n/a (uses a newer, undocumented feature) |
+
+The **G600** is older and doesn't speak HID++ 2.0; it is configured through HID
+feature reports. Its three on-board profiles (20 buttons plus a G-Shift layer,
+four DPI stages, DPI shift, polling rate, LED colour/effect and G-Shift colour)
+can be read, edited, backed up and written. It has no macro memory and no host
+mode, so macros and colour sequences are not available on it.
 
 Other HID++ 2.0 Logitech gaming mice that use the same on-board memory format
 (most G mice from the last decade) should mostly work too; unknown models just
@@ -68,7 +75,11 @@ Like G HUB, there are two ways a profile can run:
   The play button tries a DPI immediately.
 * **Assignments**: every button and its G-Shift second function. Keystrokes can
   be captured by pressing them.
-* **Macros**: write steps as text or record them by typing.
+* **Macros**: write steps as text or record them by typing. Macros can play
+  once, repeat while the button is held, or repeat until pressed again, with a
+  pause between repeats and keys held down the whole time (for example: hold
+  Alt and tap Tab every 500 ms, for a button that cycles windows). Repeating
+  and held keys run in host mode.
 * **Lighting**: a live picture of the keyboard that animates the way the keys
   do; paint keys by clicking or dragging; zone effects (static, breathing, colour
   cycle, colour wave, ripple); brightness; and colour sequences: your own list

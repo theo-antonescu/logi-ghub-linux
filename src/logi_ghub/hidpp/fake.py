@@ -331,4 +331,7 @@ def fake_devices():
         d.online = True
         d.fake_model = model
         out.append(d)
+    from ..features.g600 import fake_g600
+
+    out.append(fake_g600())
     return out
