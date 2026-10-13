@@ -1,0 +1,13 @@
+# logi-ghub-linux: let the logged-in desktop user talk HID++ to Logitech devices
+# without root. "uaccess" grants an ACL to the user on the active seat only.
+# Must sort before 73-seat-late.rules.
+
+# Logitech hidraw nodes over USB (receivers, corded devices, and the
+# per-device nodes the logitech-hidpp driver creates behind a receiver).
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"
+
+# Logitech devices paired over Bluetooth.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", KERNELS=="0005:046D:*", TAG+="uaccess"
+
+# uinput, used by the host-side macro/remap daemon to emit key presses.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
