@@ -56,6 +56,23 @@ def firmware(dev: Device) -> list[Firmware]:
     return out
 
 
+def model_ids(dev: Device) -> tuple[int | None, list[int]]:
+    """(unit id, product ids by transport) from getEntityCount; the same physical device reports the
+    same list whether it is plugged in by USB or reached through its receiver."""
+    d = dev.call(F.DEVICE_FW_VERSION, 0x0)
+    if len(d) < 13:
+        return None, []
+    unit = struct.unpack(">I", d[1:5])[0]
+    transports = struct.unpack(">H", d[5:7])[0]
+    ids = [struct.unpack(">H", d[7 + 2 * i : 9 + 2 * i])[0] for i in range(3)]
+    by_bit = {}
+    for bit in range(4):  # BT, BLE, Lightspeed/eQuad, USB
+        if transports & (1 << bit) and ids:
+            by_bit[bit] = ids.pop(0)
+    ordered = ([by_bit[2]] if 2 in by_bit else []) + [v for b, v in sorted(by_bit.items()) if b != 2]
+    return unit, [i for i in ordered if i]
+
+
 @dataclass
 class Battery:
     percent: int | None

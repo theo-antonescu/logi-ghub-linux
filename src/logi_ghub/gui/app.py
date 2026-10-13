@@ -16,7 +16,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import __version__, keys, profiles  # noqa: E402
+from .. import __version__, keys, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
 from ..device import LogiDevice, find_devices  # noqa: E402
 from ..features import lighting  # noqa: E402
@@ -88,6 +88,9 @@ class DevicePane(Gtk.Box):
         self.dirty = False
         self.dpi_values: list[int] = []
         self.device_brightness: int | None = None
+        self.light_state = "onboard"
+        self.onboard_effects: list[str] = []
+        self.animator = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
 
@@ -168,6 +171,9 @@ class DevicePane(Gtk.Box):
                 data["keys"] = dev.per_key.zones
             if dev.brightness:
                 data["brightness"] = dev.brightness.get()
+            if isinstance(dev.rgb, lighting.RGBEffects):
+                data["sw_control"] = dev.rgb.get_sw_control()[0]
+                data["onboard_effects"] = dev.rgb.onboard_effect_names()
             data["info"] = dev.describe()
             return data
 
@@ -181,7 +187,22 @@ class DevicePane(Gtk.Box):
         self.hz_values = data.get("hz", [])
         self.info = data["info"]
         self.device_brightness = data.get("brightness")
+        self.onboard_effects = data.get("onboard_effects", [])
+        active_name = profiles.get_active().get(self.dev.key)
+        applied = lightfx.last_applied(self.dev.key)
+        if active_name and daemon_running():
+            self.light_state = "service"
+        elif data.get("sw_control") and applied is not None:
+            self.light_state = "app"
+        else:
+            self.light_state = "onboard"
         if self.target is None:
+            if self.light_state == "service" and not self.slots:
+                try:
+                    self.edit_computer(profiles.load_profile(self.dev.key, active_name))
+                    return
+                except (OSError, ValueError, KeyError):
+                    pass
             if self.slots:
                 active = next((p for p in self.slots if p.sector == self.active_slot), self.slots[0])
                 self.edit_slot(active.sector)
@@ -193,7 +214,11 @@ class DevicePane(Gtk.Box):
                     self.profile = profiles.Profile(name="Default", device=self.dev.key)
                     self.target = ("computer", "Default")
                     self.dirty = True  # exists only in memory until saved
-                    self.rebuild()
+                if self.light_state == "app" and applied is not None and self.profile.lighting != applied:
+                    # show what this app last put on the keyboard, which is what it is showing now
+                    self.profile.lighting = applied
+                    self.dirty = True
+                self.rebuild()
         else:
             self.rebuild()
 
@@ -651,17 +676,18 @@ class DevicePane(Gtk.Box):
     # -- lighting page --------------------------------------------------------------------
     def build_lighting(self):
         self.page_reset("lighting")
+        self._stop_preview()
         dev, p = self.dev, self.profile
         visible = bool(p and (dev.rgb or dev.per_key or dev.brightness))
         self.stack.get_page(self.pages["lighting"]).set_visible(visible)
         if not visible:
             return
-        light = p.lighting.setdefault("zones", {})
-        g = self.add_group("lighting", Adw.PreferencesGroup(
-            title="Lighting",
-            description="Changes show on the device right away. They stay while this profile runs in host mode; "
-                        "otherwise the device goes back to its on-board lighting after it sleeps."))
-        give_back = Gtk.Button(label="Hand back to device", valign=Gtk.Align.CENTER)
+        light = p.lighting
+        light.setdefault("zones", {})
+
+        g = self.add_group("lighting", Adw.PreferencesGroup(title="Lighting", description=self._lighting_state_text()))
+        give_back = Gtk.Button(label="Hand back to keyboard", valign=Gtk.Align.CENTER,
+                               tooltip_text="Stop controlling the lighting; the keyboard shows its own on-board effect again")
         give_back.connect("clicked", lambda *_: self.release_lighting())
         g.set_header_suffix(give_back)
         if dev.brightness:
@@ -669,23 +695,153 @@ class DevicePane(Gtk.Box):
             scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, dev.brightness.min, dev.brightness.max, 1)
             scale.set_hexpand(True)
             scale.set_size_request(240, -1)
-            scale.set_value(p.lighting.get("brightness", self.device_brightness if self.device_brightness is not None else dev.brightness.max))
+            scale.set_value(light.get("brightness", self.device_brightness if self.device_brightness is not None else dev.brightness.max))
             scale.connect("value-changed", lambda s: self._brightness(int(s.get_value())))
             row.add_suffix(scale)
             g.add(row)
-        if dev.per_key:
-            self._per_key_group()
-        for zone in (dev.rgb.zones if dev.rgb else []):
-            self._zone_group(zone, light)
 
-    def _zone_group(self, zone: lighting.Zone, light: dict):
-        current = lighting.Effect.from_dict(light[str(zone.index)]) if str(zone.index) in light else lighting.Effect(0x01, color=0x00FFFF)
-        g = self.add_group("lighting", Adw.PreferencesGroup(title=f"{zone.name} zone"))
+        self._keyboard_group()
+        if dev.per_key:
+            self._animation_group()
+        for zone in (dev.rgb.zones if dev.rgb else []):
+            self._zone_group(zone, light["zones"])
+        self._start_preview()
+
+    def _lighting_state_text(self) -> str:
+        if self.light_state == "service":
+            return "The logi-ghubd service is running this profile; saving applies your changes to the keyboard."
+        if self.light_state == "onboard":
+            names = ", ".join(f"“{n}”" for n in self.onboard_effects) or "its default effect"
+            return (f"The keyboard is showing its own on-board effect ({names}, stored by G HUB). Keyboards can't report "
+                    "those colours back, so the picture shows this profile. Any change here takes over the lighting.")
+        return ("This is what the keyboard is showing. Changes appear right away and last until the keyboard sleeps, "
+                "unless the profile runs in host mode (then the service keeps it, including animations).")
+
+    def _keyboard_group(self):
+        p = self.profile
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Keys", description="Pick a colour, then click or drag over keys to paint them."))
+        picker = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
+        picker.set_rgba(int_to_rgba(self.paint_color))
+        picker.connect("notify::rgba", lambda b, _p: setattr(self, "paint_color", rgba_to_int(b.get_rgba())))
+        box = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        box.append(picker)
+        fill = Gtk.Button(label="Fill all")
+        clear = Gtk.Button(label="Clear")
+        box.append(fill)
+        box.append(clear)
+        if self.dev.per_key:
+            g.set_header_suffix(box)
+        self.kb_view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None)
+        painted = p.lighting.setdefault("keys", {})
+
+        def ensure_static_base():
+            zones = p.lighting["zones"]
+            if self.dev.rgb and zones.get("0", {}).get("effect") != 0x01 and not (p.lighting.get("animation") or {}).get("enabled"):
+                zones["0"] = lighting.Effect(0x01, color=0xFFFFFF).to_dict()
+                self.build_lighting_later()
+
+        def paint(zone):
+            painted[str(zone)] = self.paint_color
+            ensure_static_base()
+            self.lighting_changed()
+
+        def fill_all(*_):
+            for z in self.kb_view.buttons:
+                painted[str(z)] = self.paint_color
+            ensure_static_base()
+            self.lighting_changed()
+
+        def clear_all(*_):
+            painted.clear()
+            self.lighting_changed()
+
+        if self.dev.per_key:
+            self.kb_view.on_paint = paint
+        fill.connect("clicked", fill_all)
+        clear.connect("clicked", clear_all)
+        g.add(self.kb_view)
+
+    def _animation_group(self):
+        light = self.profile.lighting
+        anim = light.get("animation") or lightfx.default_animation()
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Colour sequence",
+            description="Cycle the keys through your own colours, in your order. Runs from the computer: "
+                        "it plays while this app is open, or always when the profile runs in host mode."))
+        enabled = Adw.SwitchRow(title="Play a colour sequence", active=bool(anim.get("enabled")))
+        g.add(enabled)
+
+        colors_row = Adw.ActionRow(title="Colours, in order")
+        colors_box = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
+        colors_row.add_suffix(colors_box)
+        g.add(colors_row)
+        step = Adw.SpinRow.new_with_range(50, 30000, 50)
+        step.set_title("Time per colour (ms)")
+        step.set_value(anim.get("step_ms", 1000))
+        g.add(step)
+        fade = Adw.SwitchRow(title="Fade between colours", active=anim.get("fade", True))
+        g.add(fade)
+        pattern_keys = list(lightfx.PATTERNS)
+        pattern = Adw.ComboRow(title="Pattern", model=Gtk.StringList.new(list(lightfx.PATTERNS.values())))
+        pattern.set_selected(pattern_keys.index(anim.get("pattern", "all")) if anim.get("pattern", "all") in pattern_keys else 0)
+        g.add(pattern)
+        keep = Adw.SwitchRow(title="Keep painted keys", subtitle="Keys you painted stay their colour while the rest animate",
+                             active=anim.get("keep_painted", True))
+        g.add(keep)
+        colors = [int(c) for c in anim.get("colors", [])] or [0xFF0000]
+
+        def store(*_):
+            light["animation"] = {
+                "enabled": enabled.get_active(), "colors": list(colors), "step_ms": int(step.get_value()),
+                "fade": fade.get_active(), "pattern": pattern_keys[pattern.get_selected()], "keep_painted": keep.get_active(),
+            }
+            for w in (colors_row, step, fade, pattern, keep):
+                w.set_sensitive(enabled.get_active())
+            self.lighting_changed()
+
+        def rebuild_colors():
+            child = colors_box.get_first_child()
+            while child:
+                nxt = child.get_next_sibling()
+                colors_box.remove(child)
+                child = nxt
+            for i, c in enumerate(colors):
+                b = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), tooltip_text=f"Colour {i + 1}")
+                b.set_rgba(int_to_rgba(c))
+                b.connect("notify::rgba", lambda btn, _p, idx=i: (colors.__setitem__(idx, rgba_to_int(btn.get_rgba())), store()))
+                colors_box.append(b)
+            if len(colors) > 1:
+                rm = Gtk.Button(icon_name="list-remove-symbolic", tooltip_text="Remove the last colour")
+                rm.add_css_class("flat")
+                rm.connect("clicked", lambda *_: (colors.pop(), rebuild_colors(), store()))
+                colors_box.append(rm)
+            if len(colors) < 12:
+                add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a colour")
+                add.add_css_class("flat")
+                add.connect("clicked", lambda *_: (colors.append(self.paint_color), rebuild_colors(), store()))
+                colors_box.append(add)
+
+        rebuild_colors()
+        for w in (colors_row, step, fade, pattern, keep):
+            w.set_sensitive(enabled.get_active())
+        enabled.connect("notify::active", store)
+        step.connect("notify::value", store)
+        fade.connect("notify::active", store)
+        pattern.connect("notify::selected", store)
+        keep.connect("notify::active", store)
+
+    def _zone_group(self, zone: lighting.Zone, zones: dict):
+        stored = zones.get(str(zone.index))
+        current = lighting.Effect.from_dict(stored) if stored else lighting.Effect(0x01, color=0xFFFFFF)
+        title = "Whole keyboard effect" if zone.index == 0 else f"{zone.name} effect"
+        desc = "Effects the keyboard runs by itself. Painted keys show over Static." if zone.index == 0 else None
+        g = self.add_group("lighting", Adw.PreferencesGroup(title=title, description=desc))
         effects = [e for e in zone.effects if e.effect_id in lighting.EFFECTS]
-        combo = Adw.ComboRow(title="Effect", model=Gtk.StringList.new([e.name for e in effects]))
         ids = [e.effect_id for e in effects]
-        if current.effect_id in ids:
-            combo.set_selected(ids.index(current.effect_id))
+        labels = [e.name for e in effects]
+        combo = Adw.ComboRow(title="Effect", model=Gtk.StringList.new(labels + ([] if stored else ["(not set)"])))
+        combo.set_selected(ids.index(current.effect_id) if stored and current.effect_id in ids else len(labels) if not stored else 0)
         g.add(combo)
         color_row = Adw.ActionRow(title="Colour")
         color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
@@ -704,8 +860,13 @@ class DevicePane(Gtk.Box):
         direction.set_selected(current.direction if current.direction in lighting.DIRECTIONS else 1)
         g.add(direction)
 
+        def selected_id():
+            i = combo.get_selected()
+            return ids[i] if i < len(ids) else None
+
         def sync_visibility():
-            params = lighting.EFFECTS[ids[combo.get_selected()]][1]
+            eid = selected_id()
+            params = lighting.EFFECTS[eid][1] if eid is not None else {}
             color_row.set_visible("color" in params)
             period.set_visible("period" in params)
             intensity.set_visible("intensity" in params)
@@ -713,12 +874,13 @@ class DevicePane(Gtk.Box):
 
         def changed(*_):
             sync_visibility()
-            eff = lighting.Effect(ids[combo.get_selected()], color=rgba_to_int(color_btn.get_rgba()),
-                                  period=int(period.get_value()), intensity=int(intensity.get_value()),
-                                  direction=direction.get_selected())
-            light[str(zone.index)] = eff.to_dict()
-            self.mark_dirty()
-            self._live_effect(zone.index, eff)
+            eid = selected_id()
+            if eid is None:
+                zones.pop(str(zone.index), None)
+            else:
+                zones[str(zone.index)] = lighting.Effect(eid, color=rgba_to_int(color_btn.get_rgba()), period=int(period.get_value()),
+                                                         intensity=int(intensity.get_value()), direction=direction.get_selected()).to_dict()
+            self.lighting_changed()
 
         sync_visibility()
         combo.connect("notify::selected", changed)
@@ -727,82 +889,91 @@ class DevicePane(Gtk.Box):
         intensity.connect("notify::value", changed)
         direction.connect("notify::selected", changed)
 
-    def _per_key_group(self):
-        p = self.profile
-        colors = {int(k): int(v) for k, v in p.lighting.get("keys", {}).items()}
-        g = self.add_group("lighting", Adw.PreferencesGroup(
-            title="Per-key colours", description="Pick a colour, then click keys to paint them. Needs the zone effect set to Static."))
-        picker = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
-        picker.set_rgba(int_to_rgba(self.paint_color))
-        picker.connect("notify::rgba", lambda b, _p: setattr(self, "paint_color", rgba_to_int(b.get_rgba())))
-        box = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
-        box.append(picker)
-        fill = Gtk.Button(label="Fill all")
-        clear = Gtk.Button(label="Clear")
-        box.append(fill)
-        box.append(clear)
-        g.set_header_suffix(box)
-        view = KeyboardView(self.dev.per_key.zones, None)
+    # preview and live application
+    def build_lighting_later(self):
+        GLib.idle_add(lambda: self.build_lighting() and False)
 
-        def paint(zone):
-            colors[zone] = self.paint_color
-            view.set_color(zone, self.paint_color)
-            self._store_keys(colors)
-            self._live_keys({zone: self.paint_color})
+    def _start_preview(self):
+        self._stop_preview()
+        if not getattr(self, "kb_view", None):
+            return
+        self.renderer = lightfx.Renderer(self.profile.lighting, self.dev.per_key.zones if self.dev.per_key else None,
+                                         len(self.dev.rgb.zones) if self.dev.rgb else 1)
+        self._t0 = GLib.get_monotonic_time() / 1e6
+        if self.light_state == "onboard" and not self.dirty:
+            self.kb_view.set_colors(self.renderer.frame(0.0))
+            return
 
-        def fill_all(*_):
-            for z in view.buttons:
-                colors[z] = self.paint_color
-            view.set_colors(colors)
-            self._store_keys(colors)
-            self._live_keys(dict(colors))
+        def tick():
+            if self.stack.get_visible_child_name() == "lighting":
+                self.kb_view.set_colors(self.renderer.frame(GLib.get_monotonic_time() / 1e6 - self._t0))
+            return True
 
-        def clear_all(*_):
-            colors.clear()
-            view.set_colors({})
-            self._store_keys(colors)
+        tick()
+        if self.renderer.is_animated():
+            self._preview_source = GLib.timeout_add(66, tick)
 
-        view.on_paint = paint
-        fill.connect("clicked", fill_all)
-        clear.connect("clicked", clear_all)
-        view.set_colors(colors)
-        g.add(view)
+    def _stop_preview(self):
+        src = getattr(self, "_preview_source", None)
+        if src:
+            GLib.source_remove(src)
+            self._preview_source = None
 
-    def _store_keys(self, colors: dict[int, int]):
-        self.profile.lighting["keys"] = {str(k): v for k, v in colors.items()}
+    def lighting_changed(self):
         self.mark_dirty()
+        self._start_preview()
+        if self.light_state == "service":
+            return  # the service owns the keyboard; it picks the change up when the profile is saved
+        self.light_state = "app"
+        if getattr(self, "_apply_pending", None):
+            GLib.source_remove(self._apply_pending)
+        self._apply_pending = GLib.timeout_add(200, self._apply_live)
 
-    def _claim(self):
-        if self.dev.rgb and not getattr(self, "_claimed", False):
-            self.dev.rgb.claim()
+    def _apply_live(self):
+        self._apply_pending = None
+        light = json.loads(json.dumps(self.profile.lighting))
+        dev = self.dev
+
+        def work():
+            old = getattr(self, "animator", None)
+            if old:
+                old.stop()
+                old.join(timeout=1)
+            claimed = getattr(self, "_claimed", False)
+            anim = lightfx.apply(dev, light, claim=not claimed)
             self._claimed = True
+            return anim
 
-    def _live_effect(self, zone: int, eff: lighting.Effect):
-        def work():
-            self._claim()
-            self.dev.rgb.set_effect(zone, eff)
-
-        run_async(work, None, self.fail)
-
-    def _live_keys(self, colors: dict[int, int]):
-        def work():
-            self._claim()
-            self.dev.per_key.set_colors(colors)
-
-        run_async(work, None, self.fail)
+        run_async(work, lambda anim: setattr(self, "animator", anim), self.fail)
+        return False
 
     def _brightness(self, value: int):
         self.profile.lighting["brightness"] = value
         self.mark_dirty()
         run_async(lambda: self.dev.brightness.set(value), None, self.fail)
 
+    def stop_lighting(self):
+        anim = getattr(self, "animator", None)
+        if anim:
+            anim.stop()
+            self.animator = None
+        self._stop_preview()
+
     def release_lighting(self):
+        self.stop_lighting()
+
         def work():
             if self.dev.rgb:
                 self.dev.rgb.release()
+            lightfx.clear_applied(self.dev.key)
             self._claimed = False
 
-        run_async(work, lambda _r: self.toast("Lighting handed back to the device"), self.fail)
+        def done(_r):
+            self.light_state = "onboard"
+            self.toast("Lighting handed back to the keyboard")
+            self.build_lighting()
+
+        run_async(work, done, self.fail)
 
     # -- info page --------------------------------------------------------------------------
     def build_info(self):

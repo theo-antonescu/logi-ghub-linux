@@ -269,6 +269,20 @@ def cmd_lighting(args) -> None:
             b.set(args.value)
         return
     rgb = _need(dev.rgb, "lighting", dev)
+    if sub == "sequence":
+        from . import lightfx
+
+        _need(dev.per_key, "per-key lighting", dev)
+        light = {"animation": {"enabled": True, "colors": [_rgb(c) for c in args.colors.split(",")], "step_ms": args.step,
+                               "fade": not args.no_fade, "pattern": args.pattern, "keep_painted": False}}
+        anim = lightfx.apply(dev, light)
+        print("playing; Ctrl+C to stop (to keep it running, save it in a profile and use host mode)")
+        try:
+            while anim.is_alive():
+                anim.join(0.5)
+        except KeyboardInterrupt:
+            anim.stop()
+        return
     if sub == "release":
         rgb.release()
         if dev.onboard:
@@ -415,6 +429,11 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--color", help="RRGGBB")
     q.add_argument("--period", type=int, help="milliseconds")
     q.add_argument("--brightness", type=int)
+    q = lsp.add_parser("sequence", help="play your own colour sequence until Ctrl+C")
+    q.add_argument("colors", help="comma separated RRGGBB colours, in order")
+    q.add_argument("--step", type=int, default=1000, help="milliseconds per colour")
+    q.add_argument("--no-fade", action="store_true")
+    q.add_argument("--pattern", default="all", choices=["all", "wave_right", "wave_left", "wave_down", "wave_up", "center_out"])
     q = lsp.add_parser("keys")
     q.add_argument("key", nargs="*", help="KEY=RRGGBB, e.g. W=ff0000 Esc=00ff00")
     q.add_argument("--all", help="fill all keys with RRGGBB first")

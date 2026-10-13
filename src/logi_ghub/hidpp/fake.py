@@ -254,6 +254,13 @@ class FakeKeyboard(FakeModel):
     def f_8071(self, fn, p):
         if fn == 0:
             zone, effect = p[0], p[1]
+            if p[2] == 0x01:  # stored ("onboard") effect slots, like the real keyboard's two G HUB effects
+                names = [b"Main Keyboard", b"Gaming Lights"]
+                slot, kind = p[3], p[4]
+                if zone != 0xFF or slot >= len(names):
+                    raise FakeError(ERR_INVALID_ARGUMENT)
+                chunk = names[slot][(kind - 4) * 11:(kind - 3) * 11] if kind >= 4 else b""
+                return bytes([0xFF, 0x00, 0x01, 0x00, 0x00]) + chunk.ljust(11, b"\x00")
             if zone == 0xFF:
                 return bytes([0xFF, 0xFF, len(self.ZONE_EFFECTS), 0, 0, 0, 1])
             effects = self.ZONE_EFFECTS[zone]

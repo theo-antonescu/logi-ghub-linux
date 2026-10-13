@@ -47,9 +47,14 @@ class LogiDevice:
         self.kind = MODELS.get(info.key, Model(info.name, "device")).kind
         self.online = False
         self.error: str | None = None
+        self.unit_id: int | None = None
+        self.model_ids: list[int] = []
 
     @property
     def key(self) -> str:
+        """Model id used for profiles: the wireless product id, also when the device is plugged in by USB."""
+        if self.model_ids:
+            return f"{self.info.vid:04x}:{self.model_ids[0]:04x}"
         return self.info.key
 
     @property
@@ -64,6 +69,10 @@ class LogiDevice:
             self.hidpp.discover_features()
             self.name = basic.device_name(self.hidpp)
             self.kind = basic.device_kind(self.hidpp)
+            try:
+                self.unit_id, self.model_ids = basic.model_ids(self.hidpp)
+            except (HIDPPError, FeatureNotSupported):
+                pass
             self.online = True
         except DeviceOffline as e:
             self.error = str(e)
@@ -178,6 +187,12 @@ def find_devices(open_them: bool = True) -> list[LogiDevice]:
                 d.open()
             except OSError as e:
                 d.error = f"cannot open {d.info.path}: {e}"
+        # A device plugged in by USB is also still listed (asleep) behind its receiver: show it once.
+        reachable = {pid for d in devs if d.online for pid in d.model_ids}
+        hidden = [d for d in devs if not d.online and d.info.pid in reachable]
+        for d in hidden:
+            d.close()
+        devs = [d for d in devs if d not in hidden]
     return devs
 
 
@@ -192,6 +207,6 @@ def select_device(devs: list[LogiDevice], selector: str | None) -> LogiDevice:
         raise LookupError("several devices found; pick one with --device (" + ", ".join(f"{d.key} {d.name}" for d in devs) + ")")
     s = selector.lower()
     for d in devs:
-        if s in (d.key, d.info.path, d.kind) or s in d.name.lower():
+        if s in (d.key, d.info.key, d.info.path, d.kind) or s in d.name.lower():
             return d
     raise LookupError(f"no device matches {selector!r}")

@@ -14,7 +14,7 @@ Developed and tested on Ubuntu 26.04 with a **G502 X LIGHTSPEED** mouse and a
 | DPI stages, DPI shift, report rate | yes, on-board and host mode | n/a |
 | Button remapping (keys, media keys, mouse buttons, DPI/profile functions, G-Shift layer) | yes, on-board and host mode | not yet (see Limitations) |
 | Macros | host mode (played by the service, with repeat modes); on-board is experimental | not yet |
-| Lighting: zone effects, per-key colours, brightness | the LIGHTSPEED model has no RGB | yes, host mode |
+| Lighting: zone effects, per-key colours, brightness, your own colour sequences | the LIGHTSPEED model has no RGB | yes, host mode |
 | On-board profile slots: read, edit, enable, switch, back up, restore | yes | n/a (uses a newer, undocumented feature) |
 
 Other HID++ 2.0 Logitech gaming mice that use the same on-board memory format
@@ -69,8 +69,13 @@ Like G HUB, there are two ways a profile can run:
 * **Assignments**: every button and its G-Shift second function. Keystrokes can
   be captured by pressing them.
 * **Macros**: write steps as text or record them by typing.
-* **Lighting**: per-key painting on a keyboard layout, zone effects (static,
-  breathing, colour cycle, colour wave, ripple), brightness.
+* **Lighting**: a live picture of the keyboard that animates the way the keys
+  do; paint keys by clicking or dragging; zone effects (static, breathing, colour
+  cycle, colour wave, ripple); brightness; and colour sequences: your own list
+  of colours in your order, stepping or fading, across the whole keyboard or as
+  a wave (right, left, down, up, from the centre), optionally keeping painted
+  keys. Sequences are played by the computer (the app while it is open, or the
+  service in host mode).
 * **Device**: firmware, battery, the HID++ feature table.
 
 Edits are made to a working copy; the banner at the top saves them to the slot
@@ -90,6 +95,7 @@ logi-ghub-cli -d mouse onboard select 2
 logi-ghub-cli -d mouse dpi 1200
 logi-ghub-cli -d keyboard lighting effect Breathing --color ff0000 --period 3000
 logi-ghub-cli -d keyboard lighting keys --all 000000 W=ff0000 A=ff0000 S=ff0000 D=ff0000
+logi-ghub-cli -d keyboard lighting sequence ff0000,ffa000,00ff00,0000ff --step 700 --pattern wave_right
 logi-ghub-cli -d keyboard lighting release
 logi-ghub-cli -d mouse profile import --slot 1 --name Gaming
 logi-ghub-cli -d mouse profile activate Gaming     # host mode via logi-ghubd ('none' to stop)
@@ -145,6 +151,10 @@ it can run next to Solaar; just don't let both drive the same device's lighting.
   scrolling normally).
 * Lighting set from the app without a running host-mode profile lasts until
   the keyboard sleeps.
+* Keyboards can't report the colours they are showing. When the G915 X runs the
+  effects G HUB stored on it, the app shows their names but can't draw them; the
+  picture shows the profile instead. Once this app sets the lighting, the
+  picture matches the keyboard.
 
 ## License
 

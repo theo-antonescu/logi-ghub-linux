@@ -11,7 +11,7 @@ import logging
 import struct
 from dataclasses import dataclass, field
 
-from ..hidpp import Device
+from ..hidpp import Device, HIDPPError
 from ..hidpp import features as F
 
 log = logging.getLogger(__name__)
@@ -161,6 +161,18 @@ class RGBEffects:
         elif self.dev.has(F.ONBOARD_PROFILES):
             self.dev.call(F.ONBOARD_PROFILES, 0x1, 0x01)
 
+    def onboard_effect_names(self) -> list[str]:
+        """Names of the effects G HUB stored in the device (getInfo type 0x01, name chunks 4-6)."""
+        names = []
+        for slot in range(8):
+            try:
+                parts = [self.dev.call(F.RGB_EFFECTS, 0x0, 0xFF, 0x00, 0x01, slot, kind, bytes(11))[5:16] for kind in (4, 5, 6)]
+            except HIDPPError:
+                break
+            name = b"".join(parts).split(b"\0")[0].decode("utf-8", "replace").strip()
+            names.append(name or f"Effect {slot + 1}")
+        return names
+
     # Power handling while the host owns the lighting: the firmware reports
     # user activity (function 1 notifications, data[0] == 0 means idle) and the
     # host must switch the LEDs off and back on itself.
@@ -276,7 +288,7 @@ class Brightness:
 
 # Per-key zone ids follow HID keyboard usages shifted down by 3 for the main
 # block (A = usage 0x04 = zone 1) and by 120 for modifiers (LeftCtrl 0xE0 = 104).
-SPECIAL_ZONES = {"Brightness": 153, "Pause/Break": 155, "Mute": 156, "Next": 157, "Previous": 158,
+SPECIAL_ZONES = {"Brightness": 153, "Play/Pause": 155, "Mute": 156, "Next": 157, "Previous": 158,
                  "G1": 180, "G2": 181, "G3": 182, "G4": 183, "G5": 184, "Logo": 210}
 
 

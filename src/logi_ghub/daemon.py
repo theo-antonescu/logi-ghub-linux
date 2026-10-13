@@ -24,7 +24,7 @@ import signal
 import threading
 import time
 
-from . import keys, profiles
+from . import keys, lightfx, profiles
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -134,6 +134,7 @@ class Session:
         self.profile_mtime = 0.0
         self.lighting_claimed = False
         self.lights_off = False
+        self.animator: lightfx.Animator | None = None
         self.slots = dev.binding_count() or (self.spy.count if self.spy else 0)
         self.rom: ob.OnboardProfile | None = None
         if dev.onboard:
@@ -163,19 +164,13 @@ class Session:
 
     def _apply_lighting(self) -> None:
         light = self.profile.lighting or {}
-        rgb = self.dev.rgb
-        if rgb and (light.get("zones") or light.get("keys")):
-            if not self.lighting_claimed:
-                rgb.claim()
-                self.lighting_claimed = True
-            for z, eff in (light.get("zones") or {}).items():
-                try:
-                    rgb.set_effect(int(z), lighting.Effect.from_dict(eff))
-                except (ValueError, HIDPPError) as e:
-                    log.warning("%s: zone %s effect not applied: %s", self.dev.name, z, e)
-            if light.get("keys") and self.dev.per_key:
-                self.dev.per_key.set_colors({int(k): int(v) for k, v in light["keys"].items()})
-        if self.dev.brightness and light.get("brightness") is not None:
+        if self.animator:
+            self.animator.stop()
+            self.animator = None
+        if self.dev.rgb and (light.get("zones") or light.get("keys") or (light.get("animation") or {}).get("enabled")):
+            self.animator = lightfx.apply(self.dev, light, claim=not self.lighting_claimed)
+            self.lighting_claimed = True
+        elif self.dev.brightness and light.get("brightness") is not None:
             self.dev.brightness.set(int(light["brightness"]))
 
     def release(self) -> None:
@@ -184,8 +179,12 @@ class Session:
             if self.spy:
                 self.spy.stop()
                 self.spy.set_remapping(self.spy.identity())
+            if self.animator:
+                self.animator.stop()
+                self.animator = None
             if self.lighting_claimed:
                 dev.rgb.release()
+                lightfx.clear_applied(dev.key)
                 self.lighting_claimed = False
             elif dev.onboard:
                 dev.onboard.set_mode(ob.MODE_ONBOARD)
@@ -197,6 +196,8 @@ class Session:
         """Switch LEDs off when the firmware reports the user idle, back on when they return."""
         rgb = self.dev.rgb
         if not active and not self.lights_off:
+            if self.animator:
+                self.animator.paused.set()
             rgb.idle_watch()
             rgb.power(False)
             self.lights_off = True

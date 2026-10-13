@@ -1,107 +1,137 @@
-"""A clickable tenkeyless keyboard for painting per-key colours."""
+"""The on-screen keyboard: shows the lighting the keyboard is showing, and lets you paint keys."""
 
 from __future__ import annotations
 
-from gi.repository import Gdk, Gtk
+import gi
 
-from .. import keys
-from ..features import lighting
+gi.require_version("Gsk", "4.0")
+gi.require_version("Graphene", "1.0")
+from gi.repository import Gdk, Graphene, Gsk, Gtk, Pango  # noqa: E402
 
-# (key name or None for a gap, width in key units); names are keys.KEY_NAMES or lighting.SPECIAL_ZONES
-TKL_ANSI: list[list[tuple[str | None, float]]] = [
-    [("Esc", 1), (None, 1), ("F1", 1), ("F2", 1), ("F3", 1), ("F4", 1), (None, 0.5), ("F5", 1), ("F6", 1), ("F7", 1),
-     ("F8", 1), (None, 0.5), ("F9", 1), ("F10", 1), ("F11", 1), ("F12", 1), (None, 0.25), ("PrintScreen", 1),
-     ("ScrollLock", 1), ("Pause", 1)],
-    [("Grave", 1), ("1", 1), ("2", 1), ("3", 1), ("4", 1), ("5", 1), ("6", 1), ("7", 1), ("8", 1), ("9", 1), ("0", 1),
-     ("Minus", 1), ("Equal", 1), ("Backspace", 2), (None, 0.25), ("Insert", 1), ("Home", 1), ("PageUp", 1)],
-    [("Tab", 1.5), ("Q", 1), ("W", 1), ("E", 1), ("R", 1), ("T", 1), ("Y", 1), ("U", 1), ("I", 1), ("O", 1), ("P", 1),
-     ("LeftBracket", 1), ("RightBracket", 1), ("Backslash", 1.5), (None, 0.25), ("Delete", 1), ("End", 1), ("PageDown", 1)],
-    [("CapsLock", 1.75), ("A", 1), ("S", 1), ("D", 1), ("F", 1), ("G", 1), ("H", 1), ("J", 1), ("K", 1), ("L", 1),
-     ("Semicolon", 1), ("Apostrophe", 1), ("Enter", 2.25)],
-    [("LeftShift", 2.25), ("Z", 1), ("X", 1), ("C", 1), ("V", 1), ("B", 1), ("N", 1), ("M", 1), ("Comma", 1), ("Dot", 1),
-     ("Slash", 1), ("RightShift", 2.75), (None, 1.25), ("Up", 1)],
-    [("LeftCtrl", 1.25), ("LeftMeta", 1.25), ("LeftAlt", 1.25), ("Space", 6.25), ("RightAlt", 1.25), ("RightMeta", 1.25),
-     ("Menu", 1.25), ("RightCtrl", 1.25), (None, 0.25), ("Left", 1), ("Down", 1), ("Right", 1)],
-]
-EXTRA_ROW = [("Logo", 1.5), ("Brightness", 1.5), ("Mute", 1), ("Previous", 1), ("Next", 1)]
-
-LABELS = {
-    "Grave": "`", "Minus": "-", "Equal": "=", "LeftBracket": "[", "RightBracket": "]", "Backslash": "\\",
-    "Semicolon": ";", "Apostrophe": "'", "Comma": ",", "Dot": ".", "Slash": "/", "Backspace": "⌫", "Enter": "⏎",
-    "LeftShift": "Shift", "RightShift": "Shift", "LeftCtrl": "Ctrl", "RightCtrl": "Ctrl", "LeftAlt": "Alt",
-    "RightAlt": "AltGr", "LeftMeta": "Super", "RightMeta": "Super", "Menu": "☰", "CapsLock": "Caps",
-    "PrintScreen": "PrtSc", "ScrollLock": "ScrLk", "PageUp": "PgUp", "PageDown": "PgDn", "Delete": "Del",
-    "Insert": "Ins", "Up": "↑", "Down": "↓", "Left": "←", "Right": "→", "Space": "", "Brightness": "☀",
-    "Previous": "⏮", "Next": "⏭", "Mute": "🔇",
-}
-
-UNIT = 4  # grid columns per key unit, so quarter-width keys line up
+from .. import layout
 
 
-def zone_of(name: str) -> int | None:
-    if name in lighting.SPECIAL_ZONES:
-        return lighting.SPECIAL_ZONES[name]
-    if name in keys.KEY_BY_NAME:
-        return lighting.zone_for_hid(keys.hid_for(name))
-    return None
+class KeyboardView(Gtk.Widget):
+    """Calls ``on_paint(zone)`` when a key is clicked (and while dragging across keys).
 
+    Drawn with GTK snapshots, so it needs no cairo bindings.
+    """
 
-class KeyboardView(Gtk.Box):
-    """Emits ``on_paint(zone)`` when a key is clicked."""
+    GAP = 0.08  # gap between keys, in key units
 
     def __init__(self, available_zones: list[int] | None, on_paint):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        super().__init__()
         self.on_paint = on_paint
-        self.buttons: dict[int, Gtk.Button] = {}
-        self.providers: dict[int, Gtk.CssProvider] = {}
-        grid = Gtk.Grid(row_spacing=4, column_spacing=0, column_homogeneous=True)
-        grid.add_css_class("lgl-keyboard")
-        for r, row in enumerate(TKL_ANSI + [EXTRA_ROW]):
-            col = 0
-            for name, width in row:
-                span = int(width * UNIT)
-                if name is not None:
-                    zone = zone_of(name)
-                    if zone is not None and (available_zones is None or zone in available_zones):
-                        lab = Gtk.Label(label=LABELS.get(name, name), ellipsize=3, width_chars=1, max_width_chars=6)
-                        b = Gtk.Button(child=lab)
-                        b.set_tooltip_text(name)
-                        b.add_css_class("lgl-key")
-                        b.set_size_request(int(width * 28) - 4, 28)
-                        b.set_margin_start(2)
-                        b.set_margin_end(2)
-                        b.connect("clicked", lambda _b, z=zone: self.on_paint(z))
-                        grid.attach(b, col, r + (1 if r == len(TKL_ANSI) else 0), span, 1)
-                        self.buttons[zone] = b
-                col += span
-            if r == len(TKL_ANSI) - 1:
-                spacer = Gtk.Box()
-                spacer.set_size_request(-1, 8)
-                grid.attach(spacer, 0, r + 1, 1, 1)
-        scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC, vscrollbar_policy=Gtk.PolicyType.NEVER)
-        scroller.set_child(grid)
-        self.append(scroller)
+        self.caps = layout.keycaps(available_zones)
+        self.buttons = {c.zone: c for c in self.caps}  # zones shown
+        self.colors: dict[int, int] = {}
+        self.x0, self.y0, self.x1, self.y1 = layout.bounds(self.caps)
+        self.set_hexpand(True)
+        self._last_painted: int | None = None
+        self._layouts: dict[str, object] = {}
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda _g, _n, x, y: self._hit(x, y, new=True))
+        self.add_controller(click)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", lambda _g, x, y: setattr(self, "_drag_origin", (x, y)))
+        drag.connect("drag-update", self._drag)
+        self.add_controller(drag)
+        self._drag_origin = (0.0, 0.0)
+        self.set_cursor(Gdk.Cursor.new_from_name("pointer"))
 
+    def do_measure(self, orientation, for_size):
+        aspect = (self.y1 - self.y0) / (self.x1 - self.x0)
+        if orientation == Gtk.Orientation.HORIZONTAL:
+            return 360, 620, -1, -1
+        width = for_size if for_size > 0 else 620
+        h = int(width * aspect) + 8
+        return h, h, -1, -1
+
+    def do_get_request_mode(self):
+        return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
+
+    # geometry
+    def _scale(self, width: int, height: int) -> tuple[float, float, float]:
+        unit = min((width - 8) / (self.x1 - self.x0), (height - 8) / (self.y1 - self.y0))
+        ox = (width - unit * (self.x1 - self.x0)) / 2
+        oy = (height - unit * (self.y1 - self.y0)) / 2
+        return unit, ox, oy
+
+    def _zone_at(self, x: float, y: float) -> int | None:
+        unit, ox, oy = self._scale(self.get_width(), self.get_height())
+        kx = (x - ox) / unit + self.x0
+        ky = (y - oy) / unit + self.y0
+        for c in self.caps:
+            if c.x <= kx <= c.x + c.w and c.y <= ky <= c.y + 1:
+                return c.zone
+        return None
+
+    def _hit(self, x: float, y: float, new: bool = False):
+        zone = self._zone_at(x, y)
+        if zone is not None and self.on_paint and (new or zone != self._last_painted):
+            self._last_painted = zone
+            self.on_paint(zone)
+
+    def _drag(self, _g, dx: float, dy: float):
+        ox, oy = self._drag_origin
+        self._hit(ox + dx, oy + dy)
+
+    # colours
     def set_color(self, zone: int, rgb: int | None) -> None:
-        b = self.buttons.get(zone)
-        if b is None:
-            return
-        provider = self.providers.get(zone)
-        if provider is None:
-            provider = Gtk.CssProvider()
-            b.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
-            self.providers[zone] = provider
         if rgb is None:
-            css = "button { }"
+            self.colors.pop(zone, None)
         else:
-            r, g, bl = (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF
-            fg = "#000" if (0.299 * r + 0.587 * g + 0.114 * bl) > 140 else "#fff"
-            css = f"button {{ background: rgb({r},{g},{bl}); color: {fg}; box-shadow: none; }}"
-        provider.load_from_string(css)
+            self.colors[zone] = rgb
+        self.queue_draw()
 
     def set_colors(self, colors: dict[int, int], default: int | None = None) -> None:
-        for zone in self.buttons:
-            self.set_color(zone, colors.get(zone, default))
+        new = {z: colors.get(z, default) for z in self.buttons if colors.get(z, default) is not None}
+        if new != self.colors:
+            self.colors = new
+            self.queue_draw()
+
+    # drawing
+    def do_snapshot(self, snapshot):
+        width, height = self.get_width(), self.get_height()
+        unit, ox, oy = self._scale(width, height)
+        g = self.GAP * unit
+        radius = 0.12 * unit
+        font = Pango.FontDescription.from_string(f"Sans {max(6, int(unit * 0.22))}")
+        border = Gdk.RGBA(red=1, green=1, blue=1, alpha=0.18)
+        for c in self.caps:
+            x = ox + (c.x - self.x0) * unit + g / 2
+            y = oy + (c.y - self.y0) * unit + g / 2
+            w = c.w * unit - g
+            h = unit - g
+            rgb = self.colors.get(c.zone)
+            fill = Gdk.RGBA()
+            if rgb is None:
+                fill.red, fill.green, fill.blue, fill.alpha = 0.22, 0.22, 0.24, 1
+            else:
+                fill.red, fill.green, fill.blue, fill.alpha = ((rgb >> 16) & 0xFF) / 255, ((rgb >> 8) & 0xFF) / 255, (rgb & 0xFF) / 255, 1
+            rect = Graphene.Rect().init(x, y, w, h)
+            rounded = Gsk.RoundedRect()
+            rounded.init_from_rect(rect, radius)
+            snapshot.push_rounded_clip(rounded)
+            snapshot.append_color(fill, rect)
+            snapshot.pop()
+            snapshot.append_border(rounded, [1, 1, 1, 1], [border] * 4)
+            label = c.label
+            if label:
+                lum = 0.0 if rgb is None else (0.299 * ((rgb >> 16) & 0xFF) + 0.587 * ((rgb >> 8) & 0xFF) + 0.114 * (rgb & 0xFF))
+                text = Gdk.RGBA()
+                text.red = text.green = text.blue = 0.05 if lum > 140 else 0.92
+                text.alpha = 1
+                pl = self.create_pango_layout(label)
+                pl.set_font_description(font)
+                tw, th = pl.get_pixel_size()
+                if tw > w - 4:
+                    pl.set_text(label[:3], -1)
+                    tw, th = pl.get_pixel_size()
+                snapshot.save()
+                snapshot.translate(Graphene.Point().init(x + (w - tw) / 2, y + (h - th) / 2))
+                snapshot.append_layout(pl, text)
+                snapshot.restore()
 
 
 def rgba_to_int(rgba: Gdk.RGBA) -> int:
