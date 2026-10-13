@@ -87,6 +87,7 @@ class DevicePane(Gtk.Box):
         self.target: tuple[str, object] | None = None
         self.dirty = False
         self.dpi_values: list[int] = []
+        self.device_brightness: int | None = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
 
@@ -165,6 +166,8 @@ class DevicePane(Gtk.Box):
                 data["rgb"] = dev.rgb.zones
             if dev.per_key:
                 data["keys"] = dev.per_key.zones
+            if dev.brightness:
+                data["brightness"] = dev.brightness.get()
             data["info"] = dev.describe()
             return data
 
@@ -177,6 +180,7 @@ class DevicePane(Gtk.Box):
         self.dpi_values = data.get("dpi_values", [])
         self.hz_values = data.get("hz", [])
         self.info = data["info"]
+        self.device_brightness = data.get("brightness")
         if self.target is None:
             if self.slots:
                 active = next((p for p in self.slots if p.sector == self.active_slot), self.slots[0])
@@ -188,6 +192,7 @@ class DevicePane(Gtk.Box):
                 else:
                     self.profile = profiles.Profile(name="Default", device=self.dev.key)
                     self.target = ("computer", "Default")
+                    self.dirty = True  # exists only in memory until saved
                     self.rebuild()
         else:
             self.rebuild()
@@ -663,7 +668,7 @@ class DevicePane(Gtk.Box):
             scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, dev.brightness.min, dev.brightness.max, 1)
             scale.set_hexpand(True)
             scale.set_size_request(240, -1)
-            scale.set_value(p.lighting.get("brightness", dev.brightness.max))
+            scale.set_value(p.lighting.get("brightness", self.device_brightness if self.device_brightness is not None else dev.brightness.max))
             scale.connect("value-changed", lambda s: self._brightness(int(s.get_value())))
             row.add_suffix(scale)
             g.add(row)

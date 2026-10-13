@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Logitech G devices
+GenericName=Mouse and keyboard settings
+Comment=DPI, buttons, macros, lighting and on-board profiles for Logitech G devices
+Exec=logi-ghub
+Icon=input-gaming
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=logitech;ghub;g hub;mouse;keyboard;dpi;macro;rgb;lighting;
