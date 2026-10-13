@@ -1187,7 +1187,44 @@ class MainWindow(Adw.ApplicationWindow):
         self.content_page = Adw.NavigationPage(title="Device", child=self.content_view)
         self.split.set_content(self.content_page)
         self.panes: dict[str, DevicePane] = {}
+        self.rows: dict[int, Adw.ActionRow] = {}
         self.scan()
+        if not fake:
+            GLib.timeout_add_seconds(10, self.wake_check)
+
+    def wake_check(self) -> bool:
+        """Devices that were asleep show up by themselves once they wake (no need to press Refresh)."""
+        asleep = [d for d in self.devices if not d.online]
+        if not asleep:
+            return True
+
+        def work():
+            woke = []
+            for d in asleep:
+                try:
+                    d.close()
+                    d.open()
+                except OSError:
+                    continue
+                if d.online:
+                    woke.append((d, d.battery()))
+            return woke
+
+        def done(woke):
+            for d, b in woke:
+                row = self.rows.get(id(d))
+                if row is None:
+                    continue
+                row.set_title(GLib.markup_escape_text(d.name))
+                row.set_subtitle(f"{b.percent}% battery" if b and b.percent else "connected")
+                row.remove_css_class("lgl-dim")
+                if self.list.get_selected_row() is row:
+                    self.on_select(self.list, row)
+            if woke:
+                self.toast(", ".join(d.name for d, _ in woke) + " connected")
+
+        run_async(work, done)
+        return True
 
     def toast(self, text: str):
         self.toasts.add_toast(Adw.Toast(title=GLib.markup_escape_text(text), timeout=5))
@@ -1208,6 +1245,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def found(self, devices: list[LogiDevice]):
         self.devices = devices
+        self.rows = {}
         _clear(self.list)
         if not devices:
             self.status.set_title("No Logitech devices found")
@@ -1222,9 +1260,10 @@ class MainWindow(Adw.ApplicationWindow):
                 b = d.battery()
                 row.set_subtitle(f"{b.percent}% battery" if b and b.percent else "connected")
             else:
-                row.set_subtitle("asleep or off: press a key / move it, then refresh")
+                row.set_subtitle("asleep or off: press a key or move it")
                 row.add_css_class("lgl-dim")
             row.dev = d
+            self.rows[id(d)] = row
             self.list.append(row)
         want = os.environ.get("LOGI_GHUB_DEVICE")
         first = next((i for i, d in enumerate(devices) if d.online and (not want or want in (d.key, d.kind))), None)
