@@ -689,7 +689,14 @@ class DevicePane(Gtk.Box):
         give_back = Gtk.Button(label="Hand back to keyboard", valign=Gtk.Align.CENTER,
                                tooltip_text="Stop controlling the lighting; the keyboard shows its own on-board effect again")
         give_back.connect("clicked", lambda *_: self.release_lighting())
-        g.set_header_suffix(give_back)
+        show = Gtk.Button(label="Show on keyboard", valign=Gtk.Align.CENTER, tooltip_text="Put this profile's lighting on the keyboard now")
+        show.add_css_class("suggested-action")
+        show.connect("clicked", lambda *_: self.lighting_changed(dirty=False))
+        header = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        if self.light_state != "service":
+            header.append(show)
+        header.append(give_back)
+        g.set_header_suffix(header)
         if dev.brightness:
             row = Adw.ActionRow(title="Brightness")
             scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, dev.brightness.min, dev.brightness.max, 1)
@@ -919,12 +926,15 @@ class DevicePane(Gtk.Box):
             GLib.source_remove(src)
             self._preview_source = None
 
-    def lighting_changed(self):
-        self.mark_dirty()
+    def lighting_changed(self, dirty: bool = True):
+        if dirty:
+            self.mark_dirty()
         self._start_preview()
         if self.light_state == "service":
             return  # the service owns the keyboard; it picks the change up when the profile is saved
-        self.light_state = "app"
+        if self.light_state != "app":
+            self.light_state = "app"
+            self.build_lighting_later()
         if getattr(self, "_apply_pending", None):
             GLib.source_remove(self._apply_pending)
         self._apply_pending = GLib.timeout_add(200, self._apply_live)
