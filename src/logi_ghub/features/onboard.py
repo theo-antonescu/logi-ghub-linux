@@ -263,6 +263,12 @@ class OnboardProfile:
     def to_bytes(self) -> bytes:
         return seal(self.raw)
 
+    @property
+    def display_name(self) -> str:
+        """Name to show: G HUB leaves PROFILE_NAME_DEFAULT in unnamed slots."""
+        n = self.name
+        return n if n and n != "PROFILE_NAME_DEFAULT" else f"Slot {self.sector}"
+
     def copy(self) -> "OnboardProfile":
         return OnboardProfile(bytes(self.raw), self.sector, self.enabled)
 

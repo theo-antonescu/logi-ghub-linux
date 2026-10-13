@@ -15,7 +15,7 @@ DESKTOP=io.github.theo_antonescu.LogiGhubLinux.desktop
 
 if [ "${1:-}" = "--uninstall" ]; then
     systemctl --user disable --now logi-ghubd.service 2>/dev/null || true
-    rm -f "$BIN/logi-ghub" "$BIN/logi-ghub-cli" "$BIN/logi-ghubd" "$APPS/$DESKTOP" "$UNITS/logi-ghubd.service"
+    rm -f "$BIN/logi-ghub" "$BIN/logi-ghub-cli" "$BIN/logi-ghubd" "$BIN/logi-ghub-tray" "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/logi-ghub-tray.desktop" "$APPS/$DESKTOP" "$UNITS/logi-ghubd.service"
     rm -rf "$VENV"
     echo "Removed. Profiles and backups are kept in ~/.config/logi-ghub-linux and ~/.local/share/logi-ghub-linux."
     exit 0
@@ -31,7 +31,7 @@ fi
 "$VENV/bin/pip" install --quiet --no-build-isolation --upgrade "$REPO" 2>/dev/null || "$VENV/bin/pip" install --quiet --upgrade "$REPO"
 
 mkdir -p "$BIN" "$APPS" "$UNITS"
-for exe in logi-ghub logi-ghub-cli logi-ghubd; do
+for exe in logi-ghub logi-ghub-cli logi-ghubd logi-ghub-tray; do
     ln -sf "$VENV/bin/$exe" "$BIN/$exe"
 done
 sed "s|^Exec=logi-ghub|Exec=$BIN/logi-ghub|" "$REPO/data/$DESKTOP" > "$APPS/$DESKTOP"

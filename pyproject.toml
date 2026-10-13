@@ -19,6 +19,7 @@ test = ["pytest"]
 [project.scripts]
 logi-ghub-cli = "logi_ghub.cli:main"
 logi-ghubd = "logi_ghub.daemon:main"
+logi-ghub-tray = "logi_ghub.tray:main"
 
 [project.gui-scripts]
 logi-ghub = "logi_ghub.gui.app:main"

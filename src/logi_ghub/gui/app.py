@@ -233,7 +233,7 @@ class DevicePane(Gtk.Box):
     def edit_slot(self, slot: int):
         p = self.slots[slot - 1]
         self.profile = profiles.Profile.from_onboard(self.dev.key, p, self.dev.binding_count(), None,
-                                                     name=p.name or f"Slot {slot}")
+                                                     name=p.display_name)
         self.base_slot_macros(p)
         self.target = ("slot", slot)
         self.dirty = False
@@ -290,7 +290,7 @@ class DevicePane(Gtk.Box):
             for p in self.slots:
                 editing = self.target == ("slot", p.sector)
                 hz = 1000 // max(1, p.report_rate_ms)
-                row = Adw.ActionRow(title=GLib.markup_escape_text(p.name or f"Slot {p.sector}"),
+                row = Adw.ActionRow(title=GLib.markup_escape_text(p.display_name),
                                     subtitle=f"Slot {p.sector} · {'/'.join(map(str, p.active_dpis))} DPI · {hz} Hz"
                                     + (" · active" if p.sector == self.active_slot else "")
                                     + ("" if p.enabled else " · disabled"))
@@ -1170,6 +1170,7 @@ class MainWindow(Adw.ApplicationWindow):
         refresh.connect("clicked", lambda *_: self.scan())
         sh.pack_start(refresh)
         menu = Gio.Menu()
+        menu.append("Run in the background at login", "app.background")
         menu.append("About", "app.about")
         sh.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
         side.add_top_bar(sh)
@@ -1258,6 +1259,26 @@ class App(Adw.Application):
         about = Gio.SimpleAction.new("about", None)
         about.connect("activate", self.about)
         self.add_action(about)
+        from .. import autostart
+
+        bg = Gio.SimpleAction.new_stateful("background", None, GLib.Variant("b", autostart.is_enabled()))
+        bg.connect("change-state", self.set_background)
+        self.add_action(bg)
+
+    def set_background(self, action, value):
+        """Panel icon at login plus the logi-ghubd service (host-mode profiles, macros, key assignments)."""
+        from .. import autostart
+
+        on = value.get_boolean()
+        action.set_state(value)
+
+        def done(problems):
+            win = self.props.active_window
+            if win is not None:
+                msg = ("Runs in the background from now on" if on else "No longer runs in the background")
+                win.toast(msg + (": " + "; ".join(problems) if problems else ""))
+
+        run_async(lambda: autostart.set_enabled(on), done, lambda e: done([str(e)]))
 
     def do_activate(self):
         provider = Gtk.CssProvider()
