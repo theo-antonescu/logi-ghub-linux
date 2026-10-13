@@ -442,7 +442,8 @@ class DevicePane(Gtk.Box):
             run_async(work, done, self.fail)
 
         confirm(self.win, f"Write to on-board slot {slot}?",
-                f"This replaces slot {slot} of the {dev.name} with “{prof.name}”. "
+                f"This replaces slot {slot} of the {dev.name} with “{prof.name}” and enables the slot "
+                f"(so the profile button cycles through it). "
                 f"A backup of the whole on-board memory is saved first in {ob.backup_dir()}.", "Write", go)
 
     def save(self):
