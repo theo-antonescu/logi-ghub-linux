@@ -8,6 +8,13 @@ from pathlib import Path
 APP = "logi-ghub-linux"
 
 
+def use_sandbox() -> None:
+    """Keep simulated-device sessions (--fake) away from real profiles and backups."""
+    root = Path(f"/tmp/{APP}-fake-{os.getuid()}")
+    os.environ["XDG_CONFIG_HOME"] = str(root / "config")
+    os.environ["XDG_DATA_HOME"] = str(root / "data")
+
+
 def config_dir() -> Path:
     base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     d = base / APP
