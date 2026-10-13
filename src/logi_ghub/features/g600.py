@@ -174,6 +174,10 @@ class G600Profile:
     def to_bytes(self) -> bytes:
         return bytes(self.raw)
 
+    @property
+    def display_name(self) -> str:
+        return f"Profile {self.sector}"
+
     def copy(self) -> "G600Profile":
         return G600Profile(bytes(self.raw), self.sector)
 

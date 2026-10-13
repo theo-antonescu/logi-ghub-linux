@@ -89,6 +89,13 @@ Like G HUB, there are two ways a profile can run:
   service in host mode).
 * **Device**: firmware, battery, the HID++ feature table.
 
+**Panel icon.** `logi-ghub-tray` puts an icon in the top bar (Ubuntu's AppIndicator
+extension, KDE and most panels) showing each device's battery. Its menu switches the
+on-board profile, turns host-mode profiles on and off, and opens the app. It warns
+with a desktop notification when a battery drops to 15%. In the app's menu, **Run in
+the background at login** starts the icon at login and enables the `logi-ghubd`
+service in one step.
+
 Edits are made to a working copy; the banner at the top saves them to the slot
 or file being edited.
 
