@@ -58,3 +58,4 @@ def test_python_romania_preset_fits():
     assert all(c & 0xFFFF == 0 or (c >> 16) < 0x10 for c in ins)  # Insert stays a shade of the blue stripe
     logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
     assert len(logo) > 50  # rainbow
+    assert all(f[layout.zone_of("Mute")] == f[layout.zone_of("Logo")] for f, _ in info["frames"])
