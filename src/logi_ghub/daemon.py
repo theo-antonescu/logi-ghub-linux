@@ -415,7 +415,6 @@ class Session:
         if not active and not self.lights_off:
             if self.animator:
                 self.animator.paused.set()
-            rgb.idle_watch()
             rgb.power(False)
             self.lights_off = True
             log.info("%s: idle, lighting off", self.dev.name)

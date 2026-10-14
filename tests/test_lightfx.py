@@ -52,5 +52,5 @@ def test_apply_animation_drives_per_key_frames():
     anim.stop()
     anim.join(1)
     m = kb.fake_model
-    assert m.sw_control == (3, 4)
+    assert m.sw_control == (3, 6)  # software control with host power handling
     assert m.keys and set(m.keys.values()) == {0x112233}

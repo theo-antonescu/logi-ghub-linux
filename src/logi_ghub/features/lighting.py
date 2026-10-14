@@ -152,7 +152,9 @@ class RGBEffects:
             self.dev.call(F.PROFILE_MANAGEMENT, 0x6, 0x05)
         elif self.dev.has(F.ONBOARD_PROFILES):
             self.dev.call(F.ONBOARD_PROFILES, 0x1, 0x02)
-        self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x03, self.FLAG_NVCONFIG)
+        # FLAG_POWER hands idle handling to the host too. Without it the firmware's own power-save
+        # brings the stored on-board animation back over the host's colours after a minute.
+        self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x03, self.FLAG_NVCONFIG | self.FLAG_POWER)
 
     def release(self) -> None:
         self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x00, 0x00)
@@ -173,12 +175,9 @@ class RGBEffects:
             names.append(name or f"Effect {slot + 1}")
         return names
 
-    # Power handling while the host owns the lighting: the firmware reports
-    # user activity (function 1 notifications, data[0] == 0 means idle) and the
-    # host must switch the LEDs off and back on itself.
-    def idle_watch(self) -> None:
-        self.dev.call(F.RGB_EFFECTS, 0x5, 0x01, 0x03, self.FLAG_POWER)
-
+    # Power handling while the host owns the lighting (claimed with FLAG_POWER):
+    # the firmware reports user activity (function 1 notifications, data[0] == 0
+    # means idle) and the host must switch the LEDs off and back on itself.
     def power(self, on: bool) -> None:
         self.dev.call(F.RGB_EFFECTS, 0x8, 0x01, 0x01 if on else 0x03, 0x00)
 
