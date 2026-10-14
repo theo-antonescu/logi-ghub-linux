@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import colorsys
+import math
 
 from . import layout
-from .lightfx import sequence_color
+from .lightfx import scale
 
 # A high-contrast Python syntax theme, as LED colours (saturated, so they read on black keycaps):
 # letters blue like strings, digits green like numbers, special keys yellow; the rest follows
@@ -54,26 +55,32 @@ def python_theme(zones: set[int]) -> dict[int, int]:
     return out
 
 
-def python_romania(zones: list[int], period_ms: int = 48, loop_ms: int = 7200, wave_step_ms: int = 1200):
-    """Python-theme keys, a Romanian-flag wave across Ins/Home/PgUp/Del/End/PgDn, a rainbow logo.
+def python_romania(zones: list[int], period_ms: int = 48, loop_ms: int = 7200, wave_ms: int = 2400):
+    """Python-theme keys, a waving Romanian flag on Ins/Home/PgUp/Del/End/PgDn, a rainbow logo.
 
-    Returns frames for features.rgb_store.build_file.
+    The flag's stripes stay in order (blue, yellow, red from left to right); a ripple of
+    brightness runs across them like wind through cloth. Returns frames for
+    features.rgb_store.build_file.
     """
     zs = set(zones)
     base = {z: 0 for z in zs}  # anything without a role stays dark
     base.update(python_theme(zs))
-    nav = [[layout.zone_of(k) for k in col if layout.zone_of(k) in zs] for col in NAV_COLUMNS]
-    logo = layout.zone_of("Logo")
     flag = [RO_BLUE, RO_YELLOW, RO_RED]
+    stripes = []  # (zone, colour, ripple phase)
+    for col_index, col in enumerate(NAV_COLUMNS):
+        for row_index, name in enumerate(col):
+            z = layout.zone_of(name)
+            if z in zs:
+                # the ripple reaches the bottom row a little later, as a flag's free edge lags
+                stripes.append((z, flag[col_index], col_index * 0.22 + row_index * 0.1))
+    logo = layout.zone_of("Logo")
     frames = []
     for i in range(loop_ms // period_ms):
         t = i * period_ms
         colours = dict(base)
-        for col_index, col in enumerate(nav):
-            # the flag scrolls left to right: each column is one stripe behind the one on its left
-            c = sequence_color(flag, t / wave_step_ms - col_index, fade=True)
-            for z in col:
-                colours[z] = c
+        for z, colour, phase in stripes:
+            ripple = 0.5 + 0.5 * math.sin(2 * math.pi * (t / wave_ms - phase))
+            colours[z] = scale(colour, 0.3 + 0.7 * ripple ** 1.5)
         if logo in zs:
             r, g, b = colorsys.hsv_to_rgb((t / loop_ms) % 1.0, 1.0, 1.0)
             colours[logo] = (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255)

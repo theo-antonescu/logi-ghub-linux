@@ -54,6 +54,7 @@ def test_python_romania_preset_fits():
     f0 = info["frames"][0][0]
     assert f0[layout.zone_of("A")] == presets.PY_STRING and f0[layout.zone_of("Space")] == presets.PY_SKY
     ins = [f[layout.zone_of("Insert")] for f, _ in info["frames"]]
-    assert presets.RO_BLUE in ins and len(set(ins)) > 3  # the flag wave moves
+    assert len(set(ins)) > 10  # the flag ripples
+    assert all(c & 0xFFFF == 0 or (c >> 16) < 0x10 for c in ins)  # Insert stays a shade of the blue stripe
     logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
     assert len(logo) > 50  # rainbow
