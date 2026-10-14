@@ -105,9 +105,7 @@ class AdjustableDpi:
         return self.dev.call(F.ADJUSTABLE_DPI, 0x0)[0]
 
     def dpi_list(self, sensor: int = 0) -> list[int]:
-        raw = b""
-        d = self.dev.call(F.ADJUSTABLE_DPI, 0x1, sensor)
-        raw = d[1:]
+        raw = self.dev.call(F.ADJUSTABLE_DPI, 0x1, sensor)[1:]
         values: list[int] = []
         i = 0
         while i + 1 < len(raw):

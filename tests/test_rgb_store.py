@@ -59,3 +59,28 @@ def test_python_romania_preset_fits():
     logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
     assert len(logo) > 50  # rainbow
     assert all(f[layout.zone_of("Mute")] == f[layout.zone_of("Logo")] for f, _ in info["frames"])
+
+
+def test_presets_and_lighting_are_stored_through_one_checked_path(monkeypatch):
+    uploads = []
+
+    class Recorder:
+        def __init__(self, hidpp):
+            pass
+
+        def upload(self, slot, data, progress=None):
+            uploads.append((slot, data))
+
+    class Keyboard:
+        key, hidpp = "046d:40b6", None
+
+        class per_key:
+            zones = ZONES
+
+    monkeypatch.setattr(rs, "Uploader", Recorder)
+    info = rs.store_preset(Keyboard(), "python-romania")
+    assert info["name"] == "Python + Romania" and info["period_ms"] == 48
+    assert uploads[-1][0] == 1 and rs.load_local("046d:40b6", 1)["name"] == "Python + Romania"
+    light = {"keys": {"1": 0xFF0000}, "zones": {"0": {"effect": 1, "color": 0}}}
+    assert rs.store_lighting(Keyboard(), light, "Mine")["frames"][0][0][1] == 0xFF0000
+    assert [slot for slot, _ in uploads] == [1, 1]
