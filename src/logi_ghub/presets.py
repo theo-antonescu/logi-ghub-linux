@@ -56,7 +56,8 @@ def python_theme(zones: set[int]) -> dict[int, int]:
 
 
 def python_romania(zones: list[int], period_ms: int = 48, loop_ms: int = 7200, wave_ms: int = 2400):
-    """Python-theme keys, a waving Romanian flag on Ins/Home/PgUp/Del/End/PgDn, a rainbow logo.
+    """Python-theme keys, a waving Romanian flag on Ins/Home/PgUp/Del/End/PgDn, and a rainbow on the
+    logo and the media and brightness keys.
 
     The flag's stripes stay in order (blue, yellow, red from left to right); a ripple of
     brightness runs across them like wind through cloth. Returns frames for
@@ -73,7 +74,8 @@ def python_romania(zones: list[int], period_ms: int = 48, loop_ms: int = 7200, w
             if z in zs:
                 # the ripple reaches the bottom row a little later, as a flag's free edge lags
                 stripes.append((z, flag[col_index], col_index * 0.22 + row_index * 0.1))
-    logo = layout.zone_of("Logo")
+    # the logo and the media/brightness keys share one rainbow
+    rainbow = [z for z in (layout.zone_of(k) for k in ("Logo", "Brightness", "Mute", "Previous", "Play/Pause", "Next")) if z in zs]
     frames = []
     for i in range(loop_ms // period_ms):
         t = i * period_ms
@@ -81,9 +83,9 @@ def python_romania(zones: list[int], period_ms: int = 48, loop_ms: int = 7200, w
         for z, colour, phase in stripes:
             ripple = 0.5 + 0.5 * math.sin(2 * math.pi * (t / wave_ms - phase))
             colours[z] = scale(colour, 0.3 + 0.7 * ripple ** 1.5)
-        if logo in zs:
-            r, g, b = colorsys.hsv_to_rgb((t / loop_ms) % 1.0, 1.0, 1.0)
-            colours[logo] = (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255)
+        r, g, b = colorsys.hsv_to_rgb((t / loop_ms) % 1.0, 1.0, 1.0)
+        for z in rainbow:
+            colours[z] = (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255)
         frames.append((colours, 1))
     return frames
 
