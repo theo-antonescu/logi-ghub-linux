@@ -394,6 +394,9 @@ class Session:
                 self.animator.stop()
                 self.animator = None
             if self.lighting_claimed:
+                if self.lights_off:  # idle: switch the LEDs back on, or they stay dark after the hand-back
+                    dev.rgb.power(True)
+                    self.lights_off = False
                 dev.rgb.release()
                 lightfx.clear_applied(dev.key)
                 self.lighting_claimed = False
