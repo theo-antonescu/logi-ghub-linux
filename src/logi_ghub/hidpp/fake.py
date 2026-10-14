@@ -37,7 +37,7 @@ class FakeTransport:
 
     def write(self, data: bytes) -> None:
         self.log.append(bytes(data))
-        report, devnumber, sub_id, address = data[0], data[1], data[2], data[3]
+        sub_id, address = data[2], data[3]
         params = bytes(data[4:])
         try:
             reply = self.model.handle(sub_id, address >> 4, params)
@@ -322,20 +322,12 @@ def fake_devices():
     from ..device import LogiDevice
     from .protocol import Device
 
-    out = []
-    for model in (FakeG502X(), FakeKeyboard()):
-        d = LogiDevice(model.info())
-        d.hidpp = Device(FakeTransport(model))
-        d.hidpp.ping()
-        d.hidpp.discover_features()
-        from ..features import basic
-
-        d.name = basic.device_name(d.hidpp)
-        d.kind = basic.device_kind(d.hidpp)
-        d.online = True
-        d.fake_model = model
-        out.append(d)
     from ..features.g600 import fake_g600
 
+    out = []
+    for model in (FakeG502X(), FakeKeyboard()):
+        d = LogiDevice(model.info()).attach(Device(FakeTransport(model)))
+        d.fake_model = model
+        out.append(d)
     out.append(fake_g600())
     return out

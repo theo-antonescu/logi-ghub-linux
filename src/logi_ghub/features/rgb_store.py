@@ -142,7 +142,7 @@ def parse_file(data: bytes) -> dict:
 
 def frames_from_lighting(light: dict, zones: list[int], period_ms: int = 32) -> list[tuple[dict[int, int], int]]:
     """Sample the app's lighting (painted keys and/or a colour sequence) into stored frames."""
-    from ..lightfx import Renderer, sequence_color  # noqa: F401 - Renderer does the work
+    from ..lightfx import Renderer
 
     r = Renderer(light, zones)
     anim = r.animation
@@ -242,11 +242,24 @@ def load_local(model_key: str, slot: int) -> dict | None:
         return None
 
 
-def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
-    """Turn the app's lighting into an animation and save it in ``slot``. Returns the parsed result."""
-    zones = dev.per_key.zones
-    frames = frames_from_lighting(light, zones)
-    data = build_file(name, frames)
+def store_frames(dev, name: str, frames: list[tuple[dict[int, int], int]], period_ms: int = 32, slot: int = 1,
+                 progress=None) -> dict:
+    """Save an animation in ``slot`` of the keyboard and keep a copy on this computer. Returns the parsed file."""
+    data = build_file(name, frames, period_ms=period_ms)
     Uploader(dev.hidpp).upload(slot, data, progress)
     save_local(dev.key, slot, data)
     return parse_file(data)
+
+
+def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
+    """Turn the app's lighting into an animation and save it in ``slot``."""
+    return store_frames(dev, name, frames_from_lighting(light, dev.per_key.zones), slot=slot, progress=progress)
+
+
+def store_preset(dev, key: str, slot: int = 1, progress=None) -> dict:
+    """Save one of the ready-made animations in presets.PRESETS in ``slot``."""
+    from ..presets import PRESETS
+
+    title, make, period = PRESETS[key]
+    return store_frames(dev, title, make(dev.per_key.zones, period_ms=period), period_ms=period, slot=slot,
+                        progress=progress)

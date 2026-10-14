@@ -26,7 +26,7 @@ import time
 
 from . import handback, keys, lightfx, profiles
 from .actions import Action
-from .device import LogiDevice, find_devices
+from .device import LogiDevice, discover
 from .features import lighting
 from .features import onboard as ob
 from .features.inputs import bitmask_changes
@@ -229,6 +229,13 @@ class Session:
                     self.vinput.key(code, False)
         self.held_codes.clear()
 
+    @property
+    def lost(self) -> bool:
+        """The device's node went away (unplugged). The daemon then ends the session, and starts it again
+        once the device is back."""
+        hidpp = self.dev.hidpp
+        return hidpp is None or hidpp.lost
+
     # -- button handling --------------------------------------------------------
     def action_for(self, index: int) -> Action:
         layer = self.profile.gshift_buttons if self.gshift else self.profile.buttons
@@ -340,7 +347,7 @@ class Session:
 
 def _profile_mtime(model_key: str, name: str) -> float:
     try:
-        return os.stat(profiles.profile_dir(model_key) / f"{profiles._slug(name)}.json").st_mtime
+        return os.stat(profiles.profile_path(model_key, name)).st_mtime
     except OSError:
         return 0.0
 
@@ -361,17 +368,13 @@ class Daemon:
         self._last_scan = 0.0
 
     def _devices(self) -> list[LogiDevice]:
-        if self.fake:
-            from .hidpp.fake import fake_devices
-
-            return fake_devices()
-        return find_devices()
+        return discover(self.fake)
 
     def scan(self) -> None:
         active = profiles.get_active()
         # Drop sessions whose profile was deactivated or changed.
         for key, s in list(self.sessions.items()):
-            if active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
+            if s.lost or active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
                 self.end(key)
         wanted = {k: v for k, v in active.items() if k not in self.sessions}
         stale = handback.pending() - set(active)  # left in host mode while asleep, now without a profile
@@ -411,6 +414,17 @@ class Daemon:
             s.dev.close()
             log.info("%s: released", s.dev.name)
 
+    def _on_lost(self, item: tuple, error: OSError) -> None:
+        """A device stopped answering (unplugged): end its session, so held keys are let go and it is
+        picked up again when it comes back."""
+        s = item[1] if len(item) > 1 and isinstance(item[1], Session) else None
+        if s is None:
+            log.warning("device access failed: %s", error)
+            return
+        log.warning("%s: lost (%s)", s.dev.name, error)
+        if self.sessions.get(s.dev.key) is s:
+            self.end(s.dev.key)
+
     def run(self) -> None:
         log.info("logi-ghubd started")
         while not self.stop.is_set():
@@ -441,9 +455,7 @@ class Daemon:
             except (HIDPPError, DeviceOffline, TimeoutError) as e:
                 log.warning("device request failed: %s", e)
             except OSError as e:
-                s = item[1]
-                log.warning("%s: lost (%s)", s.dev.name, e)
-                self.sessions.pop(s.dev.key, None)
+                self._on_lost(item, e)
         self.shutdown()
 
     def shutdown(self) -> None:

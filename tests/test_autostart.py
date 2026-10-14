@@ -14,3 +14,8 @@ def test_enable_and_disable_writes_autostart_entry(monkeypatch):
     autostart.set_enabled(False)
     assert not autostart.is_enabled()
     assert calls == [("enable", "--now", "logi-ghubd"), ("disable", "--now", "logi-ghubd")]
+
+
+def test_process_running_reads_command_lines():
+    assert autostart.process_running(b"pytest")  # this test run
+    assert not autostart.process_running(b"no-such-program-\x01")

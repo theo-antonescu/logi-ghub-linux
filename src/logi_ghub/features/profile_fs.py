@@ -28,7 +28,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-from ..hidpp import Device, HIDPPError
+from ..hidpp import Device
 from ..hidpp import features as F
 
 PROFILE_SIZE = 0x63

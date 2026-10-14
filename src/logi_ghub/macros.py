@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from . import keys
 from .features import onboard as ob
 
-STEP_TYPES = ("down", "up", "tap", "delay", "text", "mouse", "consumer")
 REPEAT_MODES = ("once", "while_held", "toggle")
 
 _SHIFTED = {
