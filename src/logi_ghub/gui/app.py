@@ -724,6 +724,8 @@ class DevicePane(Gtk.Box):
 
         if self.stored_profiles:
             self._stored_profiles_group()
+        if dev.has(F.DFU) and dev.per_key and self.onboard_effects:
+            self._custom_slots_group()
         self._keyboard_group()
         if dev.per_key:
             self._animation_group()
@@ -779,7 +781,7 @@ class DevicePane(Gtk.Box):
             return "The logi-ghubd service is running this profile; saving applies your changes to the keyboard."
         if self.light_state == "onboard":
             names = ", ".join(f"“{n}”" for n in self.onboard_effects) or "its default effect"
-            return (f"The keyboard is showing its own on-board effect ({names}, stored by G HUB). Keyboards can't report "
+            return (f"The keyboard is showing its own on-board effect (custom animations stored on it: {names}). Keyboards can't report "
                     "those colours back, so the picture shows this profile. Any change here takes over the lighting.")
         return ("This is what the keyboard is showing. Changes appear right away and last until the keyboard sleeps, "
                 "unless the profile runs in host mode (then the service keeps it, including animations).")
@@ -812,6 +814,82 @@ class DevicePane(Gtk.Box):
                 b.connect("clicked", lambda _b, pv=preview: self._preview_stored(pv))
                 row.add_suffix(b)
             g.add(row)
+
+    def _custom_slots_group(self):
+        """The keyboard's two custom-animation slots (brightness + 8 and + 9)."""
+        from ..features import rgb_store
+
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Custom animations on the keyboard",
+            description="Played by the keyboard itself with brightness + 8 and brightness + 9, even with no computer "
+                        "connected. This app only ever writes the brightness + 9 slot."))
+        for slot, name in enumerate(self.onboard_effects[:2]):
+            keys_label = f"Brightness + {8 + slot}"
+            local = rgb_store.load_local(self.dev.key, slot)
+            mine = local is not None and local["name"] == name
+            if slot == 0:
+                sub = f"“{name}” (made in G HUB; protected, and its colours can't be read back)"
+            elif mine:
+                sub = f"“{name}”, saved from this app ({len(local['frames'])} frames)"
+            else:
+                sub = f"“{name}” (made in G HUB; its colours can't be read back)"
+            row = Adw.ActionRow(title=keys_label, subtitle=GLib.markup_escape_text(sub))
+            if mine:
+                b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Play it in the picture below")
+                b.connect("clicked", lambda _b, info=local: self._preview_frames(info["frames"], info["period_ms"]))
+                row.add_suffix(b)
+            if slot in rgb_store.WRITABLE_SLOTS:
+                save = Gtk.Button(label="Save current lighting here", valign=Gtk.Align.CENTER,
+                                  tooltip_text="Store the painted keys and/or colour sequence below in this slot")
+                save.add_css_class("suggested-action")
+                save.connect("clicked", lambda _b, s=slot, n=name: self._store_animation(s, n))
+                row.add_suffix(save)
+            g.add(row)
+
+    def _store_animation(self, slot: int, current_name: str):
+        from ..features import rgb_store
+
+        light = json.loads(json.dumps(self.profile.lighting))
+        name = self.profile.name[:31] or "logi-ghub-linux"
+
+        def go():
+            self.toast("Saving to the keyboard…")
+
+            def work():
+                anim = getattr(self, "animator", None)
+                if anim:
+                    anim.stop()
+                return rgb_store.store_lighting(self.dev, light, name, slot)
+
+            def done(info):
+                self.onboard_effects = self.dev.rgb.onboard_effect_names() if self.dev.rgb else self.onboard_effects
+                self.toast(f"Saved “{info['name']}” to brightness + {8 + slot} ({len(info['frames'])} frames)")
+                self.build_lighting()
+
+            run_async(work, done, self.fail)
+
+        confirm(self.win, f"Save to brightness + {8 + slot}?",
+                f"This replaces “{current_name}” on the keyboard with this profile's painted keys and colour sequence. "
+                "Brightness + 8 is never changed.", "Save", go)
+
+    def _preview_frames(self, frames: list, period_ms: int):
+        """Play stored frames in the on-screen keyboard."""
+        self._stop_preview()
+        total = sum(d for _, d in frames) or 1
+        self._t0 = GLib.get_monotonic_time() / 1e6
+
+        def tick():
+            pos = int(((GLib.get_monotonic_time() / 1e6 - self._t0) * 1000 / max(1, period_ms)) % total)
+            for colors, dur in frames:
+                if pos < dur:
+                    self.kb_view.set_colors(colors)
+                    break
+                pos -= dur
+            return True
+
+        tick()
+        if len(frames) > 1:
+            self._preview_source = GLib.timeout_add(max(16, period_ms), tick)
 
     def _preview_stored(self, light: dict):
         """Draw a stored effect in the on-screen keyboard without touching the device."""

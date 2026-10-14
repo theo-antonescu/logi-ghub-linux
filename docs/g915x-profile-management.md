@@ -29,3 +29,17 @@ G HUB also sent these while starting up; their exact meaning is not known yet:
 * fn 9 `81 01 01 00 01 00 63 <crc32 of profile 1>`: refers to profile 1's file and its CRC
 * fn 9 `1b 05 <profile> 02 00 00 02 41 d9 12 ff`: per profile, a 0x1B05 (key customisation) table
 * 0x8071 fn 7 `01 00 00 00 3c 01 0e`: power-save after 60 s, off after 270 s
+
+## Custom animations (implemented in `features/rgb_store.py`)
+
+Recorded while G HUB saved an effect named "Claude Test" to the brightness + 9 slot.
+G HUB uploads a file with the DFU feature (0x00D0): fn 4 `04 <slot> "RGB_V0000"` starts it,
+a notification says the keyboard is ready, then the file goes out in 16-byte packets on
+function `n % 4` (n from 1); each reply echoes n and a status (1 continue, 2 complete).
+
+The file is a 0x4B-byte header (name, UUID, frame count, frame period in ms, brightness)
+followed by 17-byte records that are per-key lighting (0x8081) commands as sent live
+(`1b`, `5b`, `6b`) and `7b` frame ends with the frame index and duration. It is padded with
+0xFF to 12304 bytes and followed by a 16-byte trailer `03 00 .. 00`; without the trailer the
+keyboard rejects the upload with status 0x98 and marks the slot invalid. Slot 0 is
+brightness + 8, slot 1 brightness + 9. There is no command to read an animation back.
