@@ -90,8 +90,11 @@ def main(argv=None) -> int:
                 index_to_feature[params[0]] = pending_root.pop(swid)
                 if index_to_feature[params[0]] == F.FEATURE_SET:
                     featureset_index = params[0]
-        if not out and featureset_index is not None and sub == featureset_index and fn == 1:
-            pass  # index of the asked entry is in the request; handled below
+        if featureset_index is not None and sub == featureset_index and fn == 1:
+            if out:
+                pending_root[("fs", swid)] = params[0]
+            elif ("fs", swid) in pending_root:
+                index_to_feature[pending_root.pop(("fs", swid))] = struct.unpack(">H", params[0:2])[0]
         fid = index_to_feature.get(sub)
         if sub in (0x8F, 0xFF):
             label = "ERROR"
