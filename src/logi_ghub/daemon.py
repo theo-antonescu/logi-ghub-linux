@@ -10,10 +10,13 @@ activate NAME``) the daemon:
 * claims lighting and applies the profile's effects and per-key colours,
 * for keyboards with key assignments: takes the keyboard's input device and
   performs the assigned actions (see keyremap.py),
+* for keyboards with the double-press filter on (chatter.py): drops key
+  chatter, also when no host-mode profile runs (the keyboard then keeps its
+  on-board profile and lighting; the daemon only takes its key input),
 * re-applies everything when the device reconnects after sleep, and hands the
   device back to its on-board profile when it exits.
 
-Devices without an active profile are left alone.
+Devices without an active profile or double-press filter are left alone.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ import signal
 import threading
 import time
 
-from . import keyremap, keys, lightfx, profiles
+from . import chatter, keyremap, keys, lightfx, profiles
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -128,8 +131,9 @@ class Session:
     """A device running a host profile."""
 
     def __init__(self, dev: LogiDevice, profile: profiles.Profile, events: queue.Queue, runner: MacroRunner,
-                 vinput: VirtualInput | None):
+                 vinput: VirtualInput | None, chatter_filter=None):
         self.dev = dev
+        self.chatter_filter = chatter_filter  # () -> chatter.ChatterFilter | None
         self.profile = profile
         self.events = events
         self.runner = runner
@@ -175,13 +179,17 @@ class Session:
         log.info("%s: profile '%s' applied in host mode", dev.name, p.name)
 
     def ensure_keys(self) -> None:
-        """Start key remapping if the profile has key assignments and it isn't running (again after a reconnect)."""
-        if not self.profile.key_actions or self.vinput is None or getattr(self.dev, "fake_model", None) is not None:
+        """Take the keyboard's keys if the profile has key assignments or the double-press filter is on.
+
+        Runs again on every rescan, so the grab comes back after a reconnect.
+        """
+        if getattr(self.dev, "fake_model", None) is not None:
             return
         if self.remapper is not None and (self.remapper.running or self.remapper.panicked):
-            return  # after the escape keys, stay off until the profile is saved or activated again
-        mapping = keyremap.resolve(self.profile.key_actions)
-        if not mapping:
+            return  # after the escape keys, stay off until the profile or the filter settings change
+        mapping = keyremap.resolve(self.profile.key_actions) if self.vinput is not None else {}
+        chatter_filter = self.chatter_filter() if self.chatter_filter else None
+        if not mapping and chatter_filter is None:
             return
         info = self.dev.info
         nodes = keyremap.find_event_nodes(info.path, info.behind_receiver)
@@ -189,7 +197,8 @@ class Session:
             self._keys_problem("no keyboard input device found next to %s; key assignments not active", info.path)
             return
         remapper = keyremap.KeyRemapper(self.dev.name, nodes, mapping, pointer=self.vinput, runner=self.runner,
-                                        macros={m.name: m for m in self.profile.macros}, tag=f"{self.dev.key}:keys")
+                                        macros={m.name: m for m in self.profile.macros}, tag=f"{self.dev.key}:keys",
+                                        chatter=chatter_filter)
         try:
             remapper.start()
         except PermissionError as e:
@@ -200,6 +209,13 @@ class Session:
             self._keys_problem("key assignments not active: %s", e)
             return
         self.remapper = remapper
+
+    def restart_keys(self) -> None:
+        """Let go of the keys so the next ensure_keys starts again with new settings."""
+        if self.remapper is not None:
+            self.remapper.stop()
+            self.remapper = None
+        self.keys_warned = False
 
     def _keys_problem(self, msg: str, *args) -> None:
         """ensure_keys runs again on every rescan; say what's wrong once."""
@@ -393,6 +409,12 @@ class Daemon:
         self.runner = MacroRunner(self.vinput)
         self._active_mtime = 0.0
         self._last_scan = 0.0
+        # Double-press filter for keyboards without a host session (sessions run it in their own grab).
+        self.double_press: dict[str, chatter.Settings] = {}
+        self._double_press_mtime = -1.0
+        self.chatter_stats: dict[str, chatter.Stats] = {}
+        self.guards: dict[str, keyremap.KeyRemapper] = {}
+        self._guard_warned: set[str] = set()
 
     def _devices(self) -> list[LogiDevice]:
         if self.fake:
@@ -401,8 +423,76 @@ class Daemon:
             return fake_devices()
         return find_devices()
 
+    # -- double-press filter ----------------------------------------------------
+    def chatter_filter(self, key: str) -> chatter.ChatterFilter | None:
+        """A fresh filter for a keyboard whose double-press filter is on, else None."""
+        settings = self.double_press.get(key)
+        if settings is None or not settings.enabled:
+            return None
+        stats = self.chatter_stats.get(key)
+        if stats is None:
+            stats = self.chatter_stats[key] = chatter.Stats(key)
+        return chatter.ChatterFilter(settings, stats)
+
+    def load_double_press(self) -> bool:
+        """Re-read the settings if they changed; every grab then starts again with them. True if they changed."""
+        mtime = chatter.settings_mtime()
+        if mtime == self._double_press_mtime:
+            return False
+        self._double_press_mtime = mtime
+        self.double_press = chatter.load_all()
+        self.chatter_stats.clear()  # read again: the CLI may have reset them (at most a second of counts is lost)
+        for key in list(self.guards):
+            self.stop_guard(key)
+        self._guard_warned.clear()
+        for s in self.sessions.values():
+            s.restart_keys()
+        return True
+
+    def guards_wanted(self) -> set[str]:
+        """Keyboards that need a filter-only grab: filter on, no host session, no guard running."""
+        for key, g in list(self.guards.items()):
+            if not g.running and not g.panicked:
+                self.stop_guard(key)  # the input device went away (unplugged); start again when it is back
+        return {k for k, s in self.double_press.items()
+                if s.enabled and k not in self.sessions and k not in self.guards}
+
+    def start_guard(self, dev: LogiDevice) -> None:
+        def problem(msg, *args):
+            (log.debug if dev.key in self._guard_warned else log.warning)("%s: " + msg, dev.name, *args)
+            self._guard_warned.add(dev.key)
+
+        if getattr(dev, "fake_model", None) is not None:
+            return
+        nodes = keyremap.find_event_nodes(dev.info.path, dev.info.behind_receiver)
+        if not nodes:
+            problem("no keyboard input device found next to %s; double-press filter not active", dev.info.path)
+            return
+        guard = keyremap.KeyRemapper(dev.name, nodes, {}, chatter=self.chatter_filter(dev.key),
+                                     tag=f"{dev.key}:keys")
+        try:
+            guard.start()
+        except PermissionError as e:
+            problem("cannot open the keyboard's input device (%s); reinstall the udev rule "
+                    "(scripts/install.sh --udev) for the double-press filter", e)
+            return
+        except OSError as e:
+            problem("double-press filter not active: %s", e)
+            return
+        self.guards[dev.key] = guard
+
+    def stop_guard(self, key: str) -> None:
+        g = self.guards.pop(key, None)
+        if g is not None:
+            g.stop()
+
+    def save_stats(self) -> None:
+        for stats in self.chatter_stats.values():
+            stats.save()
+
     def scan(self) -> None:
         active = profiles.get_active()
+        self.load_double_press()
         # Drop sessions whose profile was deactivated or changed.
         for key, s in list(self.sessions.items()):
             if active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
@@ -410,21 +500,26 @@ class Daemon:
         for s in self.sessions.values():
             s.ensure_keys()
         wanted = {k: v for k, v in active.items() if k not in self.sessions}
-        if not wanted:
+        guards = self.guards_wanted()
+        if not wanted and not guards:
             return
         for dev in self._devices():
             name = wanted.get(dev.key)
             if not name or not dev.online:
+                if dev.key in guards and dev.key not in self.guards:
+                    self.start_guard(dev)
                 dev.close()
                 continue
             if dev.hidpp is None:
                 log.warning("%s: host mode is not supported on this device; it keeps its on-board profiles", dev.name)
                 dev.close()
                 continue
+            self.stop_guard(dev.key)  # the session's own grab takes over the filter
             try:
                 profile = profiles.load_profile(dev.key, name)
                 dev.hidpp.swid = DAEMON_SW_ID
-                session = Session(dev, profile, self.events, self.runner, self.vinput)
+                session = Session(dev, profile, self.events, self.runner, self.vinput,
+                                  chatter_filter=lambda k=dev.key: self.chatter_filter(k))
                 session.profile_mtime = _profile_mtime(dev.key, name)
                 dev.hidpp.add_handler(lambda m, s=session: self.events.put(("msg", s, m)))
                 dev.hidpp.start_listener()
@@ -449,10 +544,11 @@ class Daemon:
                 mtime = os.stat(profiles._active_path()).st_mtime
             except OSError:
                 mtime = 0.0
-            if mtime != self._active_mtime or now - self._last_scan > 10:
+            if mtime != self._active_mtime or now - self._last_scan > 10 or self._double_press_changed():
                 self._active_mtime = mtime
                 self._last_scan = now
                 self.scan()
+            self.save_stats()
             try:
                 item = self.events.get(timeout=1.0)
             except queue.Empty:
@@ -476,10 +572,16 @@ class Daemon:
                 self.sessions.pop(s.dev.key, None)
         self.shutdown()
 
+    def _double_press_changed(self) -> bool:
+        return chatter.settings_mtime() != self._double_press_mtime
+
     def shutdown(self) -> None:
         self.runner.stop_all()
+        for key in list(self.guards):
+            self.stop_guard(key)
         for key in list(self.sessions):
             self.end(key)
+        self.save_stats()
         if self.vinput:
             self.vinput.close()
         log.info("logi-ghubd stopped")
