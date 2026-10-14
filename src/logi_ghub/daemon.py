@@ -304,6 +304,7 @@ class Session:
         self.profile_mtime = 0.0
         self.lighting_claimed = False
         self.lights_off = False
+        self.script_color: int | None = None  # last SetBacklightColor, re-applied after the keyboard sleeps
         self.animator: lightfx.Animator | None = None
         self.slots = dev.binding_count() or (self.spy.count if self.spy else 0)
         self.dpi_override: list[int] | None = None  # set by a script's SetMouseDPITable
@@ -420,7 +421,10 @@ class Session:
             rgb.power(True)
             rgb.claim()
             self.lights_off = False
-            self._apply_lighting()
+            if self.script_color is not None:  # a script coloured the keyboard: keep its colour
+                self.set_backlight(self.script_color)
+            else:
+                self._apply_lighting()
             log.info("%s: active, lighting restored", self.dev.name)
 
     def release_all_keys(self) -> None:
@@ -571,6 +575,9 @@ class Session:
         rgb, pk = self.dev.rgb, self.dev.per_key
         if rgb is None:
             return
+        self.script_color = color
+        if self.lights_off:
+            return  # applied when the keyboard wakes up
         if self.animator:
             self.animator.stop()
             self.animator = None
