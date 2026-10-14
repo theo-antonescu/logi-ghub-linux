@@ -252,6 +252,15 @@ def _onboard_set(dev: LogiDevice, memory: ob.OnboardProfiles, args) -> None:
 def cmd_lighting(args) -> None:
     dev = _device(args)
     sub = args.lighting_cmd
+    if sub == "store":
+        from .features import rgb_store
+
+        if not args.yes:
+            raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
+        prof = profiles.load_profile(dev.key, args.profile)
+        info = rgb_store.store_lighting(dev, prof.lighting, (args.name or prof.name)[:31])
+        print(f"saved '{info['name']}' to brightness + 9 ({len(info['frames'])} frames)")
+        return
     if sub == "saved":
         from .features.profile_fs import ProfileFS
 
@@ -462,6 +471,10 @@ def main(argv: list[str] | None = None) -> int:
     lsp = p.add_subparsers(dest="lighting_cmd", required=True)
     lsp.add_parser("info")
     lsp.add_parser("saved", help="lighting saved in the keyboard's on-board profiles (read-only)")
+    q = lsp.add_parser("store", help="save a computer profile's lighting as the keyboard's brightness + 9 animation")
+    q.add_argument("profile", help="computer profile whose painted keys / colour sequence to store")
+    q.add_argument("--name", help="name to store it under (31 characters)")
+    q.add_argument("--yes", action="store_true")
     lsp.add_parser("release", help="give lighting control back to the device")
     q = lsp.add_parser("brightness")
     q.add_argument("value", nargs="?", type=int)
