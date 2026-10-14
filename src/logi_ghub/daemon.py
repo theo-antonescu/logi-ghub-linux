@@ -585,11 +585,14 @@ class Session:
         if not self.lighting_claimed:
             rgb.claim()
             self.lighting_claimed = True
-        for z in range(len(rgb.zones)):
-            if rgb.zones[z].effect_by_id(0x01):
-                rgb.set_effect(z, lighting.Effect(0x01, color=color), persist=False)
+        if isinstance(rgb, lighting.RGBEffects):
+            rgb.hold_static(color)
+        else:
+            for z in range(len(rgb.zones)):
+                if rgb.zones[z].effect_by_id(0x01):
+                    rgb.set_effect(z, lighting.Effect(0x01, color=color), persist=False)
         if pk:
-            pk.set_colors({z: color for z in pk.zones})
+            pk.fill(color)
 
     def _special(self, a: Action, down: bool) -> None:
         f = a.function
