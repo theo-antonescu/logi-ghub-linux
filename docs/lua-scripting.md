@@ -119,7 +119,7 @@ the script to handle.
 | `IsModifierPressed(name)` | true when the script holds the key; also physical keys on input devices this user can read (by default none: they belong to the `input` group) |
 | `IsKeyLockOn(name)` | the caps/num/scroll lock LEDs in `/sys/class/leds` |
 | `PlayMacro(name)`, `AbortMacro()` | the profile's macros (Macros page), played once; one script macro at a time |
-| `SetBacklightColor(r, g, b[, family])` | whole-keyboard colour on a keyboard running a host profile; not saved to the keyboard |
+| `SetBacklightColor(r, g, b[, family])` | whole-keyboard colour on a keyboard running a host profile, kept when the keyboard wakes from idle; not saved to the keyboard |
 | `SetMouseDPITable(t[, i])`, `SetMouseDPITableIndex(i)` | the mouse running a host profile; DPI buttons then step through the script's table |
 | `EnablePrimaryMouseButtonEvents(on)` | as documented |
 | `GetMKeyState`, `SetMKeyState` | kept by the script host (no M-keys here) |
@@ -145,6 +145,11 @@ logi-ghub-cli -d mouse profile log Gaming --follow
 * Scripts can't run without the service: there is no on-board equivalent, in
   G HUB either.
 * The real pointer position (`GetMousePosition`) isn't readable on Wayland.
+* Taking over the G915 X's lighting (a script colour or any host-mode lighting)
+  makes it forget a custom animation chosen with brightness + 8/9. After the
+  hand-back it shows the active on-board profile's own lighting; press
+  brightness + 8/9 again. The keyboard doesn't report the chosen slot, so this
+  waits for the on-board profile write command from a G HUB capture.
 * G HUB queues a second `PlayMacro` of the macro that is already playing; here
   it is ignored.
 * The G915 X can raise script events once keyboard key assignments (host-mode
