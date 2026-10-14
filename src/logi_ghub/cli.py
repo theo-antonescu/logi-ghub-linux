@@ -349,10 +349,7 @@ def cmd_lighting(args) -> None:
     elif sub == "keys":
         pk = _need(dev.per_key, "per-key lighting", dev)
         if args.all:
-            static = lighting.Effect(0x01, color=_rgb(args.all))
-            for z in range(len(rgb.zones)):
-                if rgb.zones[z].effect_by_id(0x01):
-                    rgb.set_effect(z, static)
+            rgb.hold_static(_rgb(args.all))
             pk.fill(_rgb(args.all))
         colors = {}
         from .macros import resolve_key

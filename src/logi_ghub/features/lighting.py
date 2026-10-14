@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import struct
+import time
 from dataclasses import dataclass, field
 
 from ..hidpp import Device, HIDPPError
@@ -192,6 +193,17 @@ class RGBEffects:
         if info is None:
             raise ValueError(f"zone {zone} does not support {effect.name}")
         self.dev.call(F.RGB_EFFECTS, 0x1, zone, info.index, effect.params_bytes(), 0x01 if persist else 0x00)
+
+    def hold_static(self, color: int = 0, skip=()) -> None:
+        """Put zones on a fixed colour so per-key colours stick (zones in ``skip`` keep their effect).
+
+        Any other effect, including a custom animation stored on the keyboard,
+        keeps painting keys over the host's per-key colours.
+        """
+        for z in range(len(self.zones)):
+            if z not in skip and self.zones[z].effect_by_id(0x01):
+                self.set_effect(z, Effect(0x01, color=color), persist=False)
+        time.sleep(0.1)  # a stored animation finishes its current frame first
 
 
 class ColorLedEffects:
