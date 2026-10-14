@@ -7,16 +7,15 @@ import colorsys
 from . import layout
 from .lightfx import sequence_color
 
-# A high-contrast Python syntax theme, as LED colours (saturated, so they read on black keycaps)
-PY_IDENTIFIER = 0x40C8FF  # names: letters
+# A high-contrast Python syntax theme, as LED colours (saturated, so they read on black keycaps):
+# letters blue like strings, digits green like numbers, special keys dark yellow/orange.
+PY_STRING = 0x1E78FF  # letters and quote keys
 PY_NUMBER = 0x30FF60  # 0-9
-PY_KEYWORD = 0xD020FF  # modifiers, Tab, Caps, Esc
-PY_STRING = 0xFF8C00  # ' " `
+PY_SPECIAL = 0xC86E00  # modifiers, Esc, Tab, Caps, Enter, Backspace, Space, Menu, arrows, PrtSc/ScrLk/Pause
 PY_OPERATOR = 0xFF2040  # - = / \
 PY_PUNCT = 0xFFFFFF  # , . ; [ ]
-PY_BUILTIN = 0x00FFFF  # F-keys, arrows
-PY_COMMENT = 0x50A050  # PrtSc, ScrLk, Pause
-PY_BLUE, PY_YELLOW = 0x2050FF, 0xFFD43B  # the Python logo
+PY_BUILTIN = 0x00FFFF  # F-keys
+PY_BLUE, PY_YELLOW = 0x2050FF, 0xFFD43B  # the Python logo, on the media keys
 
 # Romanian flag, tuned for LEDs (the printed blue is too dark to show)
 RO_BLUE, RO_YELLOW, RO_RED = 0x0030FF, 0xFFC800, 0xFF0010
@@ -27,26 +26,22 @@ NAV_COLUMNS = [["Insert", "Delete"], ["Home", "End"], ["PageUp", "PageDown"]]
 def python_theme(zones: set[int]) -> dict[int, int]:
     colours: dict[str, int] = {}
     for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        colours[ch] = PY_IDENTIFIER
+        colours[ch] = PY_STRING
+    for k in ("Apostrophe", "Grave"):
+        colours[k] = PY_STRING
     for d in "1234567890":
         colours[d] = PY_NUMBER
     for k in ("LeftCtrl", "RightCtrl", "LeftShift", "RightShift", "LeftAlt", "RightAlt", "LeftMeta", "RightMeta",
-              "Menu", "Tab", "CapsLock", "Esc"):
-        colours[k] = PY_KEYWORD
-    for k in ("Apostrophe", "Grave"):
-        colours[k] = PY_STRING
+              "Menu", "Tab", "CapsLock", "Esc", "Enter", "Backspace", "Space", "Up", "Down", "Left", "Right",
+              "PrintScreen", "ScrollLock", "Pause"):
+        colours[k] = PY_SPECIAL
     for k in ("Minus", "Equal", "Slash", "Backslash"):
         colours[k] = PY_OPERATOR
     for k in ("Comma", "Dot", "Semicolon", "LeftBracket", "RightBracket"):
         colours[k] = PY_PUNCT
     for i in range(1, 13):
         colours[f"F{i}"] = PY_BUILTIN
-    for k in ("Up", "Down", "Left", "Right"):
-        colours[k] = PY_BUILTIN
-    for k in ("PrintScreen", "ScrollLock", "Pause"):
-        colours[k] = PY_COMMENT
-    colours.update({"Space": PY_BLUE, "Enter": PY_YELLOW, "Backspace": PY_YELLOW,
-                    "Brightness": PY_YELLOW, "Mute": PY_BLUE, "Previous": PY_YELLOW, "Play/Pause": PY_BLUE, "Next": PY_YELLOW})
+    colours.update({"Brightness": PY_YELLOW, "Mute": PY_BLUE, "Previous": PY_YELLOW, "Play/Pause": PY_BLUE, "Next": PY_YELLOW})
     out = {}
     for name, c in colours.items():
         z = layout.zone_of(name)

@@ -52,7 +52,7 @@ def test_python_romania_preset_fits():
     info = rs.parse_file(data)
     assert len(info["frames"]) == 150
     f0 = info["frames"][0][0]
-    assert f0[layout.zone_of("A")] == presets.PY_IDENTIFIER and f0[layout.zone_of("Space")] == presets.PY_BLUE
+    assert f0[layout.zone_of("A")] == presets.PY_STRING and f0[layout.zone_of("Space")] == presets.PY_SPECIAL
     ins = [f[layout.zone_of("Insert")] for f, _ in info["frames"]]
     assert presets.RO_BLUE in ins and len(set(ins)) > 3  # the flag wave moves
     logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
