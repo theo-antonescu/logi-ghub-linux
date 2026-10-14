@@ -302,6 +302,20 @@ def _onboard_set(dev: LogiDevice, memory: ob.OnboardProfiles, args) -> None:
 def cmd_lighting(args) -> None:
     dev = _device(args)
     sub = args.lighting_cmd
+    if sub == "preset":
+        from . import presets
+        from .features import rgb_store
+
+        if args.name not in presets.PRESETS:
+            raise SystemExit("presets: " + ", ".join(presets.PRESETS))
+        if not args.yes:
+            raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
+        title, make, period = presets.PRESETS[args.name]
+        data = rgb_store.build_file(title, make(dev.per_key.zones, period_ms=period), period_ms=period)
+        rgb_store.Uploader(dev.hidpp).upload(1, data)
+        rgb_store.save_local(dev.key, 1, data)
+        print(f"saved '{title}' to brightness + 9")
+        return
     if sub == "store":
         from .features import rgb_store
 
@@ -385,10 +399,7 @@ def cmd_lighting(args) -> None:
     elif sub == "keys":
         pk = _need(dev.per_key, "per-key lighting", dev)
         if args.all:
-            static = lighting.Effect(0x01, color=_rgb(args.all))
-            for z in range(len(rgb.zones)):
-                if rgb.zones[z].effect_by_id(0x01):
-                    rgb.set_effect(z, static)
+            rgb.hold_static(_rgb(args.all))
             pk.fill(_rgb(args.all))
         colors = {}
         from .macros import resolve_key
@@ -521,6 +532,9 @@ def main(argv: list[str] | None = None) -> int:
     lsp = p.add_subparsers(dest="lighting_cmd", required=True)
     lsp.add_parser("info")
     lsp.add_parser("saved", help="lighting saved in the keyboard's on-board profiles (read-only)")
+    q = lsp.add_parser("preset", help="store a ready-made animation on brightness + 9 (python-romania)")
+    q.add_argument("name")
+    q.add_argument("--yes", action="store_true")
     q = lsp.add_parser("store", help="save a computer profile's lighting as the keyboard's brightness + 9 animation")
     q.add_argument("profile", help="computer profile whose painted keys / colour sequence to store")
     q.add_argument("--name", help="name to store it under (31 characters)")

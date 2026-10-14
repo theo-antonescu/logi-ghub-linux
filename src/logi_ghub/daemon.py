@@ -29,7 +29,7 @@ import signal
 import threading
 import time
 
-from . import chatter, keyremap, keys, lightfx, profiles
+from . import chatter, handback, keyremap, keys, lightfx, profiles
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -233,8 +233,10 @@ class Session:
         elif self.dev.brightness and light.get("brightness") is not None:
             self.dev.brightness.set(int(light["brightness"]))
 
-    def release(self) -> None:
+    def release(self) -> bool:
+        """Hand the device back to its on-board profile. False if it didn't answer (asleep or unplugged)."""
         dev = self.dev
+        ok = True
         if self.remapper is not None:
             self.remapper.stop()
             self.remapper = None
@@ -246,14 +248,19 @@ class Session:
                 self.animator.stop()
                 self.animator = None
             if self.lighting_claimed:
+                if self.lights_off:  # idle: switch the LEDs back on, or they stay dark after the hand-back
+                    dev.rgb.power(True)
+                    self.lights_off = False
                 dev.rgb.release()
                 lightfx.clear_applied(dev.key)
                 self.lighting_claimed = False
             elif dev.onboard:
                 dev.onboard.set_mode(ob.MODE_ONBOARD)
         except (HIDPPError, DeviceOffline, TimeoutError, OSError) as e:
-            log.info("%s: could not hand back cleanly (%s)", dev.name, e)
+            log.info("%s: could not hand back now (%s); will do it when it is next online", dev.name, e)
+            ok = False
         self.release_all_keys()
+        return ok
 
     def on_activity(self, active: bool) -> None:
         """Switch LEDs off when the firmware reports the user idle, back on when they return."""
@@ -261,7 +268,6 @@ class Session:
         if not active and not self.lights_off:
             if self.animator:
                 self.animator.paused.set()
-            rgb.idle_watch()
             rgb.power(False)
             self.lights_off = True
             log.info("%s: idle, lighting off", self.dev.name)
@@ -501,10 +507,14 @@ class Daemon:
             s.ensure_keys()
         wanted = {k: v for k, v in active.items() if k not in self.sessions}
         guards = self.guards_wanted()
-        if not wanted and not guards:
+        stale = handback.pending() - set(active)  # left in host mode while asleep, now without a profile
+        if not wanted and not guards and not stale:
             return
         for dev in self._devices():
             name = wanted.get(dev.key)
+            if dev.online and dev.key in stale and not name and handback.hand_back(dev):
+                handback.clear(dev.key)
+                log.info("%s: handed back to its on-board profile", dev.name)
             if not name or not dev.online:
                 if dev.key in guards and dev.key not in self.guards:
                     self.start_guard(dev)
@@ -524,6 +534,7 @@ class Daemon:
                 dev.hidpp.add_handler(lambda m, s=session: self.events.put(("msg", s, m)))
                 dev.hidpp.start_listener()
                 session.apply()
+                handback.clear(dev.key)  # a new session ends with its own hand-back
                 self.sessions[dev.key] = session
             except (OSError, HIDPPError, DeviceOffline, TimeoutError, ValueError) as e:
                 log.warning("%s: cannot start profile '%s': %s", dev.name, name, e)
@@ -532,7 +543,8 @@ class Daemon:
     def end(self, key: str) -> None:
         s = self.sessions.pop(key, None)
         if s:
-            s.release()
+            if not s.release():
+                handback.mark(key)
             s.dev.close()
             log.info("%s: released", s.dev.name)
 
