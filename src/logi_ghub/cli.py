@@ -365,10 +365,7 @@ def _lighting_keys(dev: LogiDevice, args) -> None:
     rgb = _claim_lighting(dev)
     pk = _need(dev.per_key, "per-key lighting", dev)
     if args.all:
-        static = lighting.Effect(0x01, color=_rgb(args.all))
-        for z in range(len(rgb.zones)):
-            if rgb.zones[z].effect_by_id(0x01):
-                rgb.set_effect(z, static)
+        rgb.hold_static(_rgb(args.all))
         pk.fill(_rgb(args.all))
     colors = {}
     for spec in args.key or []:

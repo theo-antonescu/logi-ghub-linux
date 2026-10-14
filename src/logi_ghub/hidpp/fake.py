@@ -270,6 +270,10 @@ class FakeKeyboard(FakeModel):
         if fn == 1:
             self.effects[p[0]] = bytes(p[:13])
             return p[:2]
+        if fn == 8:  # power mode: 1 full, 2 power save, 3 off
+            if p[0] == 1:
+                self.power_mode = p[1]
+            return bytes([p[0], getattr(self, "power_mode", 1)])
         if fn == 5:
             if p[0] == 1:
                 self.sw_control = (p[1], p[2])

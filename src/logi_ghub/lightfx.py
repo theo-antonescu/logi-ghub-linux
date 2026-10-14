@@ -249,10 +249,7 @@ def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
         dev.brightness.set(int(light["brightness"]))
     renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones))
     if renderer.animation and pk:
-        # Per-key frames show only while the firmware effect is Static.
-        for z in range(len(rgb.zones)):
-            if rgb.zones[z].effect_by_id(0x01):
-                rgb.set_effect(z, lighting.Effect(0x01, color=0, ramp=2))
+        rgb.hold_static()  # per-key frames show only while the firmware effect is Static
         anim = Animator(dev, renderer)
         anim.start()
         record_applied(dev, light)
@@ -263,6 +260,7 @@ def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
         except ValueError as e:
             log.warning("zone %s: %s", z, e)
     if pk and light.get("keys"):
+        rgb.hold_static(skip={int(z) for z in light.get("zones") or {}})
         frame = renderer.frame(0.0)
         pk.set_colors({z: c for z, c in frame.items() if z in pk.zones})
     record_applied(dev, light)

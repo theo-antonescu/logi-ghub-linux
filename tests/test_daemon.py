@@ -156,3 +156,41 @@ def test_scan_restarts_a_session_whose_device_was_unplugged(monkeypatch, tmp_pat
     fresh = d.sessions[mouse.key]
     assert fresh is not s and not fresh.lost and fresh.dev.fake_model.mode == 2  # started again on the new device
     d.shutdown()
+
+
+def test_release_while_idle_turns_the_lights_back_on():
+    from logi_ghub.daemon import MacroRunner, Session
+
+    kb = fake_devices()[1]
+    prof = profiles.Profile(name="k", device=kb.key, lighting={"zones": {"0": {"effect": 1, "color": 0xFF0000}}})
+    s = Session(kb, prof, events=None, runner=MacroRunner(None), vinput=None)
+    s.apply()
+    s.on_activity(False)
+    assert kb.fake_model.power_mode == 3
+    s.release()
+    assert kb.fake_model.power_mode == 1
+    assert kb.fake_model.sw_control == (0, 0)
+
+
+def test_a_device_asleep_at_release_is_handed_back_once_it_wakes(monkeypatch):
+    from logi_ghub import handback
+    from logi_ghub.hidpp import DeviceOffline
+
+    s, mouse, _ = session({"buttons": {3: Action.keypress("C")}})
+    m = mouse.fake_model
+    real = mouse.hidpp.request
+
+    def asleep(*a, **k):
+        raise DeviceOffline("asleep")
+
+    monkeypatch.setattr(mouse.hidpp, "request", asleep)
+    assert s.release() is False
+    handback.mark(mouse.key)
+    assert m.mode == 2  # still in host mode
+
+    monkeypatch.setattr(mouse.hidpp, "request", real)
+    assert mouse.key in handback.pending()
+    assert handback.hand_back(mouse)
+    handback.clear(mouse.key)
+    assert m.mode == 1 and not m.spying and m.remap[3] == 4
+    assert handback.pending() == set()
