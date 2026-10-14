@@ -25,6 +25,7 @@ from ..features import onboard as ob  # noqa: E402
 from ..macros import Macro  # noqa: E402
 from .editors import ActionDialog, MacroDialog, confirm  # noqa: E402
 from .keyboard import KeyboardView, int_to_rgba, rgba_to_int  # noqa: E402
+from .script import ScriptPage  # noqa: E402
 
 log = logging.getLogger(__name__)
 APP_ID = "io.github.theo_antonescu.LogiGhubLinux"
@@ -108,6 +109,7 @@ class DevicePane(Gtk.Box):
             ("dpi", "Sensitivity", "input-mouse-symbolic"),
             ("buttons", "Assignments", "input-keyboard-symbolic"),
             ("macros", "Macros", "media-record-symbolic"),
+            ("script", "Script", "utilities-terminal-symbolic"),
             ("lighting", "Lighting", "weather-clear-symbolic"),
             ("info", "Device", "dialog-information-symbolic"),
         ]:
@@ -118,6 +120,7 @@ class DevicePane(Gtk.Box):
         if os.environ.get("LOGI_GHUB_PAGE"):
             GLib.idle_add(lambda: self.stack.set_visible_child_name(os.environ["LOGI_GHUB_PAGE"]) and False)
         self.groups: dict[str, list] = {k: [] for k in self.pages}
+        self.script_page = ScriptPage(self, daemon_running)
         self.load()
 
     # -- helpers ---------------------------------------------------------------------
@@ -184,6 +187,8 @@ class DevicePane(Gtk.Box):
                 except Exception as e:  # noqa: BLE001 - optional information
                     log.info("could not read on-board profiles: %s", e)
             data["info"] = dev.describe()
+            if dev.hidpp is not None and dev.button_spy:
+                data["info"]["spy_buttons"] = dev.button_spy.count  # buttons a script hears about
             return data
 
         run_async(read, self.loaded, self.fail)
@@ -276,6 +281,7 @@ class DevicePane(Gtk.Box):
         self.build_dpi()
         self.build_buttons()
         self.build_macros()
+        self.script_page.build()
         self.build_lighting()
         self.build_info()
         self.update_banner()

@@ -34,6 +34,8 @@ class Profile:
     gshift_buttons: dict[int, Action] = field(default_factory=dict)
     macros: list[Macro] = field(default_factory=list)
     lighting: dict = field(default_factory=dict)  # {"zones": {idx: effect dict}, "keys": {zone: rgb}, "brightness": n}
+    script: str = ""  # Lua, run by the daemon in host mode (see scripting.py)
+    script_enabled: bool = True
 
     # -- json -----------------------------------------------------------------
     def to_dict(self) -> dict:
@@ -48,6 +50,7 @@ class Profile:
             "gshift_buttons": {str(k): v.to_dict() for k, v in sorted(self.gshift_buttons.items())},
             "macros": [m.to_dict() for m in self.macros],
             "lighting": self.lighting,
+            **({"script": self.script, "script_enabled": self.script_enabled} if self.script else {}),
         }
 
     @classmethod
@@ -63,6 +66,8 @@ class Profile:
             gshift_buttons={int(k): Action.from_dict(v) for k, v in d.get("gshift_buttons", {}).items()},
             macros=[Macro.from_dict(m) for m in d.get("macros", [])],
             lighting=d.get("lighting", {}),
+            script=str(d.get("script", "")),
+            script_enabled=bool(d.get("script_enabled", True)),
         )
 
     def macro(self, name: str) -> Macro | None:
