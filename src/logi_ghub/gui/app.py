@@ -845,7 +845,7 @@ class DevicePane(Gtk.Box):
                 from .. import presets
 
                 menu = Gio.Menu()
-                for key, (title, _make) in presets.PRESETS.items():
+                for key, (title, _make, _period) in presets.PRESETS.items():
                     menu.append(title, f"pane.store-preset::{key}")
                 row.add_suffix(Gtk.MenuButton(label="Presets", menu_model=menu, valign=Gtk.Align.CENTER,
                                               tooltip_text="Store a ready-made animation in this slot"))
@@ -886,14 +886,14 @@ class DevicePane(Gtk.Box):
         from .. import presets
         from ..features import rgb_store
 
-        title, make = presets.PRESETS[key]
+        title, make, period = presets.PRESETS[key]
         current = self.onboard_effects[1] if len(self.onboard_effects) > 1 else "the current animation"
 
         def go():
             self.toast("Saving to the keyboard…")
 
             def work():
-                data = rgb_store.build_file(title, make(self.dev.per_key.zones))
+                data = rgb_store.build_file(title, make(self.dev.per_key.zones, period_ms=period), period_ms=period)
                 rgb_store.Uploader(self.dev.hidpp).upload(1, data)
                 rgb_store.save_local(self.dev.key, 1, data)
                 return rgb_store.parse_file(data)
