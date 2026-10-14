@@ -252,6 +252,20 @@ def _onboard_set(dev: LogiDevice, memory: ob.OnboardProfiles, args) -> None:
 def cmd_lighting(args) -> None:
     dev = _device(args)
     sub = args.lighting_cmd
+    if sub == "preset":
+        from . import presets
+        from .features import rgb_store
+
+        if args.name not in presets.PRESETS:
+            raise SystemExit("presets: " + ", ".join(presets.PRESETS))
+        if not args.yes:
+            raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
+        title, make = presets.PRESETS[args.name]
+        data = rgb_store.build_file(title, make(dev.per_key.zones))
+        rgb_store.Uploader(dev.hidpp).upload(1, data)
+        rgb_store.save_local(dev.key, 1, data)
+        print(f"saved '{title}' to brightness + 9")
+        return
     if sub == "store":
         from .features import rgb_store
 
@@ -442,6 +456,9 @@ def main(argv: list[str] | None = None) -> int:
     lsp = p.add_subparsers(dest="lighting_cmd", required=True)
     lsp.add_parser("info")
     lsp.add_parser("saved", help="lighting saved in the keyboard's on-board profiles (read-only)")
+    q = lsp.add_parser("preset", help="store a ready-made animation on brightness + 9 (python-romania)")
+    q.add_argument("name")
+    q.add_argument("--yes", action="store_true")
     q = lsp.add_parser("store", help="save a computer profile's lighting as the keyboard's brightness + 9 animation")
     q.add_argument("profile", help="computer profile whose painted keys / colour sequence to store")
     q.add_argument("--name", help="name to store it under (31 characters)")

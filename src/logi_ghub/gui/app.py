@@ -361,6 +361,9 @@ class DevicePane(Gtk.Box):
         a = Gio.SimpleAction.new("write-slot", GLib.VariantType.new("s"))
         a.connect("activate", lambda _a, v: self.write_profile_to_slot(*v.get_string().split("\x1f")))
         group.add_action(a)
+        a = Gio.SimpleAction.new("store-preset", GLib.VariantType.new("s"))
+        a.connect("activate", lambda _a, v: self._store_preset(v.get_string()))
+        group.add_action(a)
         a = Gio.SimpleAction.new("delete-profile", GLib.VariantType.new("s"))
         a.connect("activate", lambda _a, v: self.delete_profile(v.get_string()))
         group.add_action(a)
@@ -839,6 +842,13 @@ class DevicePane(Gtk.Box):
                 b.connect("clicked", lambda _b, info=local: self._preview_frames(info["frames"], info["period_ms"]))
                 row.add_suffix(b)
             if slot in rgb_store.WRITABLE_SLOTS:
+                from .. import presets
+
+                menu = Gio.Menu()
+                for key, (title, _make) in presets.PRESETS.items():
+                    menu.append(title, f"pane.store-preset::{key}")
+                row.add_suffix(Gtk.MenuButton(label="Presets", menu_model=menu, valign=Gtk.Align.CENTER,
+                                              tooltip_text="Store a ready-made animation in this slot"))
                 save = Gtk.Button(label="Save current lighting here", valign=Gtk.Align.CENTER,
                                   tooltip_text="Store the painted keys and/or colour sequence below in this slot")
                 save.add_css_class("suggested-action")
@@ -871,6 +881,32 @@ class DevicePane(Gtk.Box):
         confirm(self.win, f"Save to brightness + {8 + slot}?",
                 f"This replaces “{current_name}” on the keyboard with this profile's painted keys and colour sequence. "
                 "Brightness + 8 is never changed.", "Save", go)
+
+    def _store_preset(self, key: str):
+        from .. import presets
+        from ..features import rgb_store
+
+        title, make = presets.PRESETS[key]
+        current = self.onboard_effects[1] if len(self.onboard_effects) > 1 else "the current animation"
+
+        def go():
+            self.toast("Saving to the keyboard…")
+
+            def work():
+                data = rgb_store.build_file(title, make(self.dev.per_key.zones))
+                rgb_store.Uploader(self.dev.hidpp).upload(1, data)
+                rgb_store.save_local(self.dev.key, 1, data)
+                return rgb_store.parse_file(data)
+
+            def done(info):
+                self.onboard_effects = self.dev.rgb.onboard_effect_names()
+                self.toast(f"Saved “{title}” to brightness + 9")
+                self.build_lighting()
+                self._preview_frames(info["frames"], info["period_ms"])
+
+            run_async(work, done, self.fail)
+
+        confirm(self.win, "Save to brightness + 9?", f"This replaces “{current}” with the “{title}” animation.", "Save", go)
 
     def _preview_frames(self, frames: list, period_ms: int):
         """Play stored frames in the on-screen keyboard."""

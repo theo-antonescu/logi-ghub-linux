@@ -42,3 +42,18 @@ def test_slot_zero_is_refused():
 def test_nothing_to_save():
     with pytest.raises(ValueError):
         rs.frames_from_lighting({}, ZONES)
+
+
+def test_python_romania_preset_fits():
+    from logi_ghub import layout, presets
+
+    frames = presets.python_romania(ZONES)
+    data = rs.build_file("Python + Romania", frames)
+    info = rs.parse_file(data)
+    assert len(info["frames"]) == 150
+    f0 = info["frames"][0][0]
+    assert f0[layout.zone_of("A")] == presets.PY_IDENTIFIER and f0[layout.zone_of("Space")] == presets.PY_BLUE
+    ins = [f[layout.zone_of("Insert")] for f, _ in info["frames"]]
+    assert presets.RO_BLUE in ins and len(set(ins)) > 3  # the flag wave moves
+    logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
+    assert len(logo) > 50  # rainbow
