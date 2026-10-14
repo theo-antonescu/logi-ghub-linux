@@ -113,7 +113,7 @@ the script to handle.
 | `PressKey`, `ReleaseKey`, `PressAndReleaseKey` | through the service's virtual keyboard; every key name and scancode in Appendix A, plus the media-key scancodes |
 | `PressMouseButton`, `ReleaseMouseButton`, `PressAndReleaseMouseButton` | virtual mouse, buttons 1-5 |
 | `MoveMouseRelative(x, y)`, `MoveMouseWheel(n)` | virtual mouse |
-| `MoveMouseTo(x, y)`, `MoveMouseToVirtual(x, y)` | a virtual absolute pointer created on first use; 0-65535 spans the whole desktop (all monitors) for both |
+| `MoveMouseTo(x, y)`, `MoveMouseToVirtual(x, y)` | a virtual absolute pointer created on first use; as on Windows, 0-65535 covers the primary monitor for `MoveMouseTo` and every monitor for `MoveMouseToVirtual` (outside GNOME both cover every monitor) |
 | `GetMousePosition()` | the last position the script set with `MoveMouseTo`; Wayland doesn't let programs read the real pointer position |
 | `IsMouseButtonPressed(n)` | true while a Logitech mouse running a host profile has a button acting as that button held down (from the mouse itself, so the left button works), or the script holds it |
 | `IsModifierPressed(name)` | true when the script holds the key; also physical keys on input devices this user can read (by default none: they belong to the `input` group) |

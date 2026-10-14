@@ -29,7 +29,7 @@ import signal
 import threading
 import time
 
-from . import inputstate, keys, lightfx, profiles, scripting
+from . import inputstate, keys, lightfx, profiles, screens, scripting
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -213,6 +213,8 @@ class SessionScriptHost(scripting.ScriptHost):
             except OSError as e:
                 self._warn_once("pointer", f"MoveMouseTo: no virtual pointer ({e})")
                 return
+        if not virtual:  # MoveMouseTo covers the primary monitor, MoveMouseToVirtual the whole desktop
+            x, y = screens.to_desktop(x, y, screens.primary_fraction())
         self.pointer.move_to(x, y)
 
     def lcd(self, text: str | None, timeout) -> None:
