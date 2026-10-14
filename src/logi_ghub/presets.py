@@ -8,14 +8,17 @@ from . import layout
 from .lightfx import sequence_color
 
 # A high-contrast Python syntax theme, as LED colours (saturated, so they read on black keycaps):
-# letters blue like strings, digits green like numbers, special keys dark yellow/orange.
-PY_STRING = 0x1E78FF  # letters and quote keys
-PY_NUMBER = 0x30FF60  # 0-9
-PY_SPECIAL = 0xC86E00  # modifiers, Esc, Tab, Caps, Enter, Backspace, Space, Menu, arrows, PrtSc/ScrLk/Pause
-PY_OPERATOR = 0xFF2040  # - = / \
-PY_PUNCT = 0xFFFFFF  # , . ; [ ]
-PY_BUILTIN = 0x00FFFF  # F-keys
-PY_BLUE, PY_YELLOW = 0x2050FF, 0xFFD43B  # the Python logo, on the media keys
+# letters blue like strings, digits green like numbers, special keys yellow; the rest follows
+# the owner's G HUB lighting (red Esc/Enter/Backspace/Super, violet and green F-keys, ...).
+PY_STRING = 0x1E78FF  # letters
+PY_NUMBER = 0x30FF60  # 0-9, F5-F8
+PY_SPECIAL = 0xFFC000  # Tab, Caps, Shift, Ctrl, Alt, Menu, `
+PY_RED = 0xFF1010  # Esc, Backspace, Enter, Super
+PY_PUNCT = 0xFFFFFF  # punctuation and - = / \
+PY_VIOLET = 0xB040FF  # F1-F4, F9-F12
+PY_SKY = 0x40B0FF  # Space, arrows
+PY_DEEP_BLUE = 0x3060FF  # PrtSc, ScrLk, Pause
+PY_MAGENTA = 0xFF20C0  # media keys and brightness
 
 # Romanian flag, tuned for LEDs (the printed blue is too dark to show)
 RO_BLUE, RO_YELLOW, RO_RED = 0x0030FF, 0xFFC800, 0xFF0010
@@ -27,21 +30,22 @@ def python_theme(zones: set[int]) -> dict[int, int]:
     colours: dict[str, int] = {}
     for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
         colours[ch] = PY_STRING
-    for k in ("Apostrophe", "Grave"):
-        colours[k] = PY_STRING
     for d in "1234567890":
         colours[d] = PY_NUMBER
-    for k in ("LeftCtrl", "RightCtrl", "LeftShift", "RightShift", "LeftAlt", "RightAlt", "LeftMeta", "RightMeta",
-              "Menu", "Tab", "CapsLock", "Esc", "Enter", "Backspace", "Space", "Up", "Down", "Left", "Right",
-              "PrintScreen", "ScrollLock", "Pause"):
+    for k in ("LeftCtrl", "RightCtrl", "LeftShift", "RightShift", "LeftAlt", "RightAlt", "Menu", "Tab", "CapsLock", "Grave"):
         colours[k] = PY_SPECIAL
-    for k in ("Minus", "Equal", "Slash", "Backslash"):
-        colours[k] = PY_OPERATOR
-    for k in ("Comma", "Dot", "Semicolon", "LeftBracket", "RightBracket"):
+    for k in ("Esc", "Backspace", "Enter", "LeftMeta", "RightMeta"):
+        colours[k] = PY_RED
+    for k in ("Minus", "Equal", "Slash", "Backslash", "Comma", "Dot", "Semicolon", "Apostrophe", "LeftBracket", "RightBracket"):
         colours[k] = PY_PUNCT
     for i in range(1, 13):
-        colours[f"F{i}"] = PY_BUILTIN
-    colours.update({"Brightness": PY_YELLOW, "Mute": PY_BLUE, "Previous": PY_YELLOW, "Play/Pause": PY_BLUE, "Next": PY_YELLOW})
+        colours[f"F{i}"] = PY_NUMBER if 5 <= i <= 8 else PY_VIOLET
+    for k in ("Space", "Up", "Down", "Left", "Right"):
+        colours[k] = PY_SKY
+    for k in ("PrintScreen", "ScrollLock", "Pause"):
+        colours[k] = PY_DEEP_BLUE
+    for k in ("Brightness", "Mute", "Previous", "Play/Pause", "Next"):
+        colours[k] = PY_MAGENTA
     out = {}
     for name, c in colours.items():
         z = layout.zone_of(name)
@@ -50,7 +54,7 @@ def python_theme(zones: set[int]) -> dict[int, int]:
     return out
 
 
-def python_romania(zones: list[int], period_ms: int = 32, loop_ms: int = 4800, wave_step_ms: int = 400):
+def python_romania(zones: list[int], period_ms: int = 48, loop_ms: int = 7200, wave_step_ms: int = 1200):
     """Python-theme keys, a Romanian-flag wave across Ins/Home/PgUp/Del/End/PgDn, a rainbow logo.
 
     Returns frames for features.rgb_store.build_file.
@@ -78,5 +82,6 @@ def python_romania(zones: list[int], period_ms: int = 32, loop_ms: int = 4800, w
 
 
 PRESETS = {
-    "python-romania": ("Python + Romania", python_romania),
+    # key: (title, frame generator, frame period in ms)
+    "python-romania": ("Python + Romania", python_romania, 48),
 }

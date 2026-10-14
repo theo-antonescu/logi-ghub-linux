@@ -260,8 +260,8 @@ def cmd_lighting(args) -> None:
             raise SystemExit("presets: " + ", ".join(presets.PRESETS))
         if not args.yes:
             raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
-        title, make = presets.PRESETS[args.name]
-        data = rgb_store.build_file(title, make(dev.per_key.zones))
+        title, make, period = presets.PRESETS[args.name]
+        data = rgb_store.build_file(title, make(dev.per_key.zones, period_ms=period), period_ms=period)
         rgb_store.Uploader(dev.hidpp).upload(1, data)
         rgb_store.save_local(dev.key, 1, data)
         print(f"saved '{title}' to brightness + 9")
