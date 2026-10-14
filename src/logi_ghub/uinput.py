@@ -104,12 +104,26 @@ class VirtualPointer(VirtualInput):
         except OSError:
             os.close(self.fd)
             raise
-        time.sleep(0.05)
+        self._created = time.monotonic()
+        self._last: tuple[int, int] | None = None
+
+    SETTLE = 1.0  # the compositor needs about a second to start listening to a new input device
 
     def move_to(self, x: int, y: int) -> None:
+        wait = self._created + self.SETTLE - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        x, y = max(0, min(65535, int(x))), max(0, min(65535, int(y)))
+        if (x, y) == self._last:
+            # The kernel drops an axis value equal to the last one, and the real mouse has probably
+            # moved the pointer since, so step one unit aside first to make the move happen again.
+            self._emit(EV_ABS, ABS_X, x - 1 if x else x + 1)
+            self._emit(EV_ABS, ABS_Y, y - 1 if y else y + 1)
+            self.sync()
         self._emit(EV_ABS, ABS_X, x)
         self._emit(EV_ABS, ABS_Y, y)
         self.sync()
+        self._last = (x, y)
 
 
 def key_code(name: str) -> int:
