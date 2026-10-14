@@ -252,6 +252,18 @@ def _onboard_set(dev: LogiDevice, memory: ob.OnboardProfiles, args) -> None:
 def cmd_lighting(args) -> None:
     dev = _device(args)
     sub = args.lighting_cmd
+    if sub == "saved":
+        from .features.profile_fs import ProfileFS
+
+        if not dev.has(F.PROFILE_MANAGEMENT):
+            raise SystemExit(f"{dev.name} has no on-board profile storage of this kind")
+        names = dev.rgb.onboard_effect_names() if isinstance(dev.rgb, lighting.RGBEffects) else []
+        for sp in ProfileFS(dev.hidpp).profiles(0):
+            desc = sp.lighting.describe()
+            if sp.lighting.effect_id == 0x0C and sp.lighting.params[0] < len(names):
+                desc = f"custom animation '{names[sp.lighting.params[0]]}'"
+            print(f"profile {sp.number} {sp.name!r}: {desc} (power save: {sp.powersave_lighting.describe()})")
+        return
     if sub == "info":
         rgb = _need(dev.rgb, "lighting", dev)
         for z in rgb.zones:
@@ -449,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sp.add_parser("lighting", help="lighting effects and per-key colours")
     lsp = p.add_subparsers(dest="lighting_cmd", required=True)
     lsp.add_parser("info")
+    lsp.add_parser("saved", help="lighting saved in the keyboard's on-board profiles (read-only)")
     lsp.add_parser("release", help="give lighting control back to the device")
     q = lsp.add_parser("brightness")
     q.add_argument("value", nargs="?", type=int)

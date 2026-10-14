@@ -20,6 +20,7 @@ from .. import __version__, keyremap, keys, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
 from ..device import LogiDevice, find_devices  # noqa: E402
 from ..features import lighting  # noqa: E402
+from ..hidpp import features as F  # noqa: E402
 from ..features import onboard as ob  # noqa: E402
 from ..macros import Macro  # noqa: E402
 from .editors import ActionDialog, MacroDialog, confirm  # noqa: E402
@@ -98,6 +99,7 @@ class DevicePane(Gtk.Box):
         self.device_brightness: int | None = None
         self.light_state = "onboard"
         self.onboard_effects: list[str] = []
+        self.stored_profiles = []
         self.animator = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
@@ -182,6 +184,13 @@ class DevicePane(Gtk.Box):
             if isinstance(dev.rgb, lighting.RGBEffects):
                 data["sw_control"] = dev.rgb.get_sw_control()[0]
                 data["onboard_effects"] = dev.rgb.onboard_effect_names()
+            if dev.has(F.PROFILE_MANAGEMENT):
+                from ..features.profile_fs import ProfileFS
+
+                try:
+                    data["stored_profiles"] = ProfileFS(dev.hidpp).profiles(0)
+                except Exception as e:  # noqa: BLE001 - optional information
+                    log.info("could not read on-board profiles: %s", e)
             data["info"] = dev.describe()
             return data
 
@@ -196,6 +205,7 @@ class DevicePane(Gtk.Box):
         self.info = data["info"]
         self.device_brightness = data.get("brightness")
         self.onboard_effects = data.get("onboard_effects", [])
+        self.stored_profiles = data.get("stored_profiles", [])
         active_name = profiles.get_active().get(self.dev.key)
         applied = lightfx.last_applied(self.dev.key)
         if active_name and daemon_running():
@@ -811,6 +821,8 @@ class DevicePane(Gtk.Box):
             row.add_suffix(scale)
             g.add(row)
 
+        if self.stored_profiles:
+            self._stored_profiles_group()
         self._keyboard_group()
         if dev.per_key:
             self._animation_group()
@@ -870,6 +882,50 @@ class DevicePane(Gtk.Box):
                     "those colours back, so the picture shows this profile. Any change here takes over the lighting.")
         return ("This is what the keyboard is showing. Changes appear right away and last until the keyboard sleeps, "
                 "unless the profile runs in host mode (then the service keeps it, including animations).")
+
+    def _stored_profiles_group(self):
+        """The lighting saved in the keyboard's own profiles (read the way G HUB reads it)."""
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Saved on the keyboard",
+            description="The lighting of the keyboard's on-board profiles (switched with its profile keys), as G HUB "
+                        "saved it. Custom animations are stored separately and their colours can't be read back."))
+        for sp in self.stored_profiles:
+            light = sp.lighting
+            title = f"Profile {sp.number}" + (f": {sp.name}" if sp.name and not sp.name.startswith("PROFILE_NAM") else "")
+            desc = light.describe()
+            if light.effect_id == 0x0C:
+                slot = light.params[0]
+                if slot < len(self.onboard_effects):
+                    desc = f"Custom animation “{self.onboard_effects[slot]}”" + (f", {light.brightness}%" if light.brightness else "")
+            row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(
+                desc + f" · power saving after {sp.powersave_timeout} s, off after {sp.poweroff_timeout} s"))
+            swatches = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
+            for c in light.colors:
+                sw = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(), sensitive=False)
+                sw.set_rgba(int_to_rgba(c))
+                swatches.append(sw)
+            row.add_suffix(swatches)
+            preview = light.to_lighting()
+            if preview is not None:
+                b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Show this in the picture below (approximate)")
+                b.connect("clicked", lambda _b, pv=preview: self._preview_stored(pv))
+                row.add_suffix(b)
+            g.add(row)
+
+    def _preview_stored(self, light: dict):
+        """Draw a stored effect in the on-screen keyboard without touching the device."""
+        self._stop_preview()
+        self.renderer = lightfx.Renderer(light, self.dev.per_key.zones if self.dev.per_key else None,
+                                         len(self.dev.rgb.zones) if self.dev.rgb else 1)
+        self._t0 = GLib.get_monotonic_time() / 1e6
+
+        def tick():
+            self.kb_view.set_colors(self.renderer.frame(GLib.get_monotonic_time() / 1e6 - self._t0))
+            return True
+
+        tick()
+        if self.renderer.is_animated():
+            self._preview_source = GLib.timeout_add(66, tick)
 
     def _keyboard_group(self):
         p = self.profile
