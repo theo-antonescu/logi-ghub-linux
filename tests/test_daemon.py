@@ -111,3 +111,17 @@ def test_hold_alt_and_repeat_tab_while_held():
     tabs = [e for e in ev if e == (15, True)]
     assert 2 <= len(tabs) <= 5  # Tab tapped every ~100 ms while held
     assert all(e[0] in (15, 56) for e in ev)
+
+
+def test_release_while_idle_turns_the_lights_back_on():
+    from logi_ghub.daemon import MacroRunner, Session
+
+    kb = fake_devices()[1]
+    prof = profiles.Profile(name="k", device=kb.key, lighting={"zones": {"0": {"effect": 1, "color": 0xFF0000}}})
+    s = Session(kb, prof, events=None, runner=MacroRunner(None), vinput=None)
+    s.apply()
+    s.on_activity(False)
+    assert kb.fake_model.power_mode == 3
+    s.release()
+    assert kb.fake_model.power_mode == 1
+    assert kb.fake_model.sw_control == (0, 0)
