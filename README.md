@@ -17,6 +17,7 @@ USB cable), and a corded **G600** MMO mouse.
 | Macros | host mode (played by the service, with repeat modes); on-board is experimental | not yet |
 | Lighting: zone effects, per-key colours, brightness, your own colour sequences | the LIGHTSPEED model has no RGB | yes, host mode |
 | On-board profile slots: read, edit, enable, switch, back up, restore | yes | n/a (uses a newer, undocumented feature) |
+| Lua scripts (G HUB's scripting API) | host mode: every button raises `OnEvent` | host mode: profile events, `SetBacklightColor` |
 
 The **G600** is older and doesn't speak HID++ 2.0; it is configured through HID
 feature reports. Its three on-board profiles (20 buttons plus a G-Shift layer,
@@ -87,6 +88,12 @@ Like G HUB, there are two ways a profile can run:
   a wave (right, left, down, up, from the centre), optionally keeping painted
   keys. Sequences are played by the computer (the app while it is open, or the
   service in host mode).
+* **Script**: a Lua script for the profile, with G HUB's API (`OnEvent`,
+  `PressKey`, `MoveMouseRelative`, `Sleep`, `IsMouseButtonPressed`,
+  `PlayMacro`, `SetMouseDPITable`, `SetBacklightColor`, ...). It runs in host
+  mode, sandboxed (no files, no programs). *Try it* runs the script on a
+  simulated clock and lists what it would do. See
+  [docs/lua-scripting.md](docs/lua-scripting.md).
 * **Device**: firmware, battery, the HID++ feature table.
 
 **Panel icon.** `logi-ghub-tray` puts an icon in the top bar (Ubuntu's AppIndicator
@@ -118,6 +125,9 @@ logi-ghub-cli -d keyboard lighting release
 logi-ghub-cli -d mouse profile import --slot 1 --name Gaming
 logi-ghub-cli -d mouse profile activate Gaming     # host mode via logi-ghubd ('none' to stop)
 logi-ghub-cli probe --out data/devices             # read-only feature dump for new models
+logi-ghub-cli script run rapid-fire.lua -e MOUSE_BUTTON_PRESSED:5 -e MOUSE_BUTTON_RELEASED:5@300   # dry run
+logi-ghub-cli -d mouse profile script Gaming --set rapid-fire.lua   # Lua script, runs in host mode
+logi-ghub-cli -d mouse profile log Gaming --follow                  # what the script prints
 ```
 
 Action syntax: `default`, `none`, `mouse:N`, `key:Ctrl+Shift+T`,
@@ -129,7 +139,8 @@ Macro syntax: comma separated `Ctrl+C`, `50ms`, `down:Shift`, `up:Shift`,
 ## How it works
 
 Everything is plain HID++ 2.0 over `/dev/hidraw*`, with no dependencies beyond
-the Python standard library (plus PyGObject for the GUI). Devices behind a
+the Python standard library (plus PyGObject for the GUI, and
+[lupa](https://pypi.org/project/lupa/) for Lua scripts, which the installer adds). Devices behind a
 Lightspeed/Unifying receiver are reached through the per-device hidraw node the
 kernel's `logitech-hidpp` driver creates.
 

@@ -29,6 +29,9 @@ fi
 
 /usr/bin/python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --quiet --no-build-isolation --upgrade "$REPO" 2>/dev/null || "$VENV/bin/pip" install --quiet --upgrade "$REPO"
+# Lua for profile scripts (optional: everything else works without it)
+"$VENV/bin/python" -c 'import lupa' 2>/dev/null || "$VENV/bin/pip" install --quiet lupa \
+    || echo "Could not install lupa (Lua for profile scripts); scripts won't run until it is installed."
 
 mkdir -p "$BIN" "$APPS" "$UNITS"
 for exe in logi-ghub logi-ghub-cli logi-ghubd logi-ghub-tray; do

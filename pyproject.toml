@@ -14,7 +14,9 @@ dependencies = []
 [project.optional-dependencies]
 # The GUI needs PyGObject with GTK 4 and libadwaita (Ubuntu: python3-gi gir1.2-adw-1).
 gui = []
-test = ["pytest"]
+# Lua scripts in profiles (G HUB's scripting API)
+lua = ["lupa"]
+test = ["pytest", "lupa"]
 
 [project.scripts]
 logi-ghub-cli = "logi_ghub.cli:main"

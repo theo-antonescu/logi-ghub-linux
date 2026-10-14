@@ -20,6 +20,9 @@ UI_DEV_SETUP = 0x405C5503
 UI_SET_EVBIT = 0x40045564
 UI_SET_KEYBIT = 0x40045565
 UI_SET_RELBIT = 0x40045566
+UI_SET_ABSBIT = 0x40045567
+UI_ABS_SETUP = 0x401C5504
+EV_ABS, ABS_X, ABS_Y = 0x03, 0x00, 0x01
 BUS_VIRTUAL = 0x06
 SYN_REPORT = 0
 
@@ -61,6 +64,13 @@ class VirtualInput:
         self._emit(keys.EV_REL, keys.REL_HWHEEL_HI_RES if horizontal else keys.REL_WHEEL_HI_RES, clicks * 120)
         self.sync()
 
+    def move(self, dx: int, dy: int) -> None:
+        if dx:
+            self._emit(keys.EV_REL, keys.REL_X, dx)
+        if dy:
+            self._emit(keys.EV_REL, keys.REL_Y, dy)
+        self.sync()
+
     def close(self) -> None:
         if self.fd >= 0:
             try:
@@ -68,6 +78,38 @@ class VirtualInput:
             finally:
                 os.close(self.fd)
                 self.fd = -1
+
+
+class VirtualPointer(VirtualInput):
+    """An absolute pointer (like a VM's USB tablet) for scripts' MoveMouseTo.
+
+    Positions run 0-65535 across the whole desktop, as on Windows; the
+    compositor maps the device to the area spanning all monitors.
+    """
+
+    def __init__(self, name: str = "logi-ghub-linux virtual pointer", path: str = "/dev/uinput"):
+        self.fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            fcntl.ioctl(self.fd, UI_SET_EVBIT, keys.EV_KEY)
+            for code in (0x110, 0x111, 0x112):  # buttons make libinput treat it as a pointer
+                fcntl.ioctl(self.fd, UI_SET_KEYBIT, code)
+            fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_ABS)
+            for axis in (ABS_X, ABS_Y):
+                fcntl.ioctl(self.fd, UI_SET_ABSBIT, axis)
+                # struct uinput_abs_setup: code, then input_absinfo (value, min, max, fuzz, flat, resolution)
+                fcntl.ioctl(self.fd, UI_ABS_SETUP, struct.pack("H2x6i", axis, 0, 0, 65535, 0, 0, 0))
+            setup = struct.pack("HHHH80sI", BUS_VIRTUAL, 0x046D, 0x0FFE, 1, name.encode()[:79], 0)
+            fcntl.ioctl(self.fd, UI_DEV_SETUP, setup)
+            fcntl.ioctl(self.fd, UI_DEV_CREATE)
+        except OSError:
+            os.close(self.fd)
+            raise
+        time.sleep(0.05)
+
+    def move_to(self, x: int, y: int) -> None:
+        self._emit(EV_ABS, ABS_X, x)
+        self._emit(EV_ABS, ABS_Y, y)
+        self.sync()
 
 
 def key_code(name: str) -> int:

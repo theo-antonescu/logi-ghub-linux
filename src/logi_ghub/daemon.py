@@ -9,7 +9,11 @@ activate NAME``) the daemon:
   (keys, media keys, DPI changes, DPI shift, G-Shift layer, macros),
 * claims lighting and applies the profile's effects and per-key colours,
 * re-applies everything when the device reconnects after sleep, and hands the
-  device back to its on-board profile when it exits.
+  device back to its on-board profile when it exits,
+* runs the profile's Lua script, if it has one (see :mod:`logi_ghub.scripting`):
+  ``OnEvent`` gets PROFILE_ACTIVATED/DEACTIVATED and every mouse button press
+  and release, and the script's PressKey, MoveMouseRelative, SetBacklightColor
+  and so on act through the virtual input device and the session's devices.
 
 Devices without an active profile are left alone.
 """
@@ -17,6 +21,7 @@ Devices without an active profile are left alone.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import os
 import queue
@@ -24,7 +29,7 @@ import signal
 import threading
 import time
 
-from . import keys, lightfx, profiles
+from . import inputstate, keys, lightfx, profiles, scripting
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -34,7 +39,7 @@ from .hidpp import DeviceOffline, HIDPPError, Message
 from .hidpp.protocol import DAEMON_SW_ID
 from .hidpp import features as F
 from .macros import Macro
-from .uinput import VirtualInput
+from .uinput import VirtualInput, VirtualPointer
 
 log = logging.getLogger("logi-ghubd")
 
@@ -51,7 +56,7 @@ class MacroRunner:
         held: list[int] = []
         try:
             for ev, arg in macro.events():
-                if stop.is_set() and macro.repeat != "once":
+                if stop.is_set() and (macro.repeat != "once" or getattr(stop, "hard", False)):
                     break
                 if ev == "delay":
                     stop.wait(int(arg) / 1000)
@@ -121,6 +126,163 @@ class MacroRunner:
             for stop in self._running.values():
                 stop.set()
 
+    def running(self, key: str) -> bool:
+        with self._lock:
+            stop = self._running.get(key)
+            return stop is not None and not stop.is_set()
+
+    def abort(self, key: str) -> None:
+        """Stop a macro mid-way, even one that plays once (scripts' AbortMacro)."""
+        with self._lock:
+            stop = self._running.get(key)
+        if stop:
+            stop.hard = True
+            stop.set()
+
+
+_input_state: inputstate.InputState | None = None
+
+
+def input_state() -> inputstate.InputState:
+    global _input_state
+    if _input_state is None:
+        _input_state = inputstate.InputState()
+    return _input_state
+
+
+class SessionScriptHost(scripting.ScriptHost):
+    """The script API for a host-mode session: real input, the running sessions' devices, the script log."""
+
+    def __init__(self, session: "Session"):
+        super().__init__("mouse" if session.dev.kind == "mouse" else "kb")
+        self.session = session
+        self.log_file = scripting.log_path(session.dev.key, session.profile.name)
+        self.pointer: VirtualPointer | None = None
+        self.macro_key = f"script:{session.dev.key}"
+        self._warned: set[str] = set()
+
+    @property
+    def vinput(self) -> VirtualInput | None:
+        return self.session.vinput
+
+    def _warn_once(self, key: str, text: str) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            self.log(text + "\n")
+
+    # -- output --------------------------------------------------------------------------------
+    def record(self, text: str) -> None:
+        log.debug("%s script: %s", self.session.dev.name, text)
+
+    def log(self, text: str) -> None:
+        scripting.append_log(self.log_file, text)
+
+    def debug(self, text: str) -> None:
+        log.info("%s script: %s", self.session.dev.name, text.rstrip())
+
+    def clear_log(self) -> None:
+        try:
+            self.log_file.write_text("")
+        except OSError:
+            pass
+
+    def error(self, text: str) -> None:
+        super().error(text)
+        log.info("%s script error: %s", self.session.dev.name, text)
+
+    def out_key(self, code: int, down: bool, name) -> None:
+        if self.vinput:
+            self.vinput.key(code, down)
+
+    def out_mouse_button(self, button: int, down: bool) -> None:
+        if self.vinput:
+            self.vinput.key(scripting.LUA_BUTTON_TO_EVDEV[button], down)
+
+    def out_move_relative(self, dx: int, dy: int) -> None:
+        if self.vinput:
+            self.vinput.move(dx, dy)
+
+    def out_wheel(self, clicks: int) -> None:
+        if self.vinput:
+            self.vinput.wheel(clicks)
+
+    def out_move_to(self, x: int, y: int, virtual: bool) -> None:
+        if self.pointer is None:
+            try:
+                self.pointer = VirtualPointer()
+            except OSError as e:
+                self._warn_once("pointer", f"MoveMouseTo: no virtual pointer ({e})")
+                return
+        self.pointer.move_to(x, y)
+
+    def lcd(self, text: str | None, timeout) -> None:
+        if text is not None:
+            self.log(f"[LCD] {text}\n")
+
+    # -- state ---------------------------------------------------------------------------------
+    def modifier_pressed(self, name: str) -> bool:
+        return super().modifier_pressed(name) or input_state().pressed(scripting.MODIFIER_CODES.get(name.lower(), ()))
+
+    def key_lock_on(self, name: str) -> bool:
+        return inputstate.lock_on(name) if name.lower() in scripting.LOCK_KEYS else False
+
+    def mouse_button_pressed(self, button: int) -> bool:
+        if super().mouse_button_pressed(button):
+            return True
+        try:
+            if any(button in s.lua_buttons_down() for s in self.session.peers()):
+                return True
+        except RuntimeError:  # a session started or ended while we looked
+            pass
+        code = scripting.LUA_BUTTON_TO_EVDEV.get(button)
+        return bool(code) and input_state().pressed((code,))
+
+    # -- macros, DPI, lighting -----------------------------------------------------------------
+    def play_macro(self, name: str) -> None:
+        macro = self.session.profile.macro(name)
+        if macro is None:
+            raise ValueError(f"PlayMacro: this profile has no macro named {name!r}")
+        if self.session.runner.running(self.macro_key):
+            return  # one script macro at a time
+        self.session.runner.press(self.macro_key, dataclasses.replace(macro, repeat="once"))
+
+    def abort_macro(self) -> None:
+        self.session.runner.abort(self.macro_key)
+
+    def _mouse_session(self) -> "Session | None":
+        s = self.session.peer("mouse")
+        if s is None or not s.dev.dpi:
+            self._warn_once("dpi", "SetMouseDPITable: no mouse with adjustable DPI is running a host-mode profile")
+            return None
+        return s
+
+    def current_dpi_table(self) -> list[int]:
+        s = self.session.peer("mouse")
+        return list(s.stages()) if s else []
+
+    def set_dpi(self, table: list[int], index: int) -> None:
+        s = self._mouse_session()
+        if s:
+            s.on_main_thread(lambda: s.set_dpi_table(table, index))
+
+    def set_backlight(self, rgb: int, family: str) -> None:
+        kind = "mouse" if family == "mouse" else "keyboard"
+        s = self.session.peer(kind)
+        if s is None or s.dev.rgb is None:
+            self._warn_once(f"backlight-{kind}", f"SetBacklightColor: no {kind} with RGB lighting is running a "
+                                                 "host-mode profile, so there is nothing to colour")
+            return
+        s.on_main_thread(lambda: s.set_backlight(rgb))
+
+    def release_all(self) -> None:
+        super().release_all()
+        self.session.runner.abort(self.macro_key)
+
+    def close(self) -> None:
+        if self.pointer:
+            self.pointer.close()
+            self.pointer = None
+
 
 class Session:
     """A device running a host profile."""
@@ -133,6 +295,7 @@ class Session:
         self.runner = runner
         self.vinput = vinput
         self.buttons_down = 0
+        self.gkeys_down = 0
         self.gshift = False
         self.dpi_index = profile.default_dpi
         self.held_codes: dict[int, list[int]] = {}
@@ -143,6 +306,12 @@ class Session:
         self.lights_off = False
         self.animator: lightfx.Animator | None = None
         self.slots = dev.binding_count() or (self.spy.count if self.spy else 0)
+        self.dpi_override: list[int] | None = None  # set by a script's SetMouseDPITable
+        self.peers = lambda: [self]  # every running session; the daemon replaces this
+        self.script: scripting.ScriptRunner | None = None
+        self.script_host: SessionScriptHost | None = None
+        count = self.spy.count if self.spy else 0
+        self.script_numbers = scripting.script_button_numbers([dev.button_name(i) for i in range(count)], count)
         self.rom: ob.OnboardProfile | None = None
         if dev.onboard:
             try:
@@ -167,7 +336,41 @@ class Session:
             self.spy.set_remapping(self._remap_table())
             self.spy.start()
         self._apply_lighting()
+        self._start_script()
         log.info("%s: profile '%s' applied in host mode", dev.name, p.name)
+
+    def _start_script(self) -> None:
+        p = self.profile
+        if self.script is not None:
+            if self.dev.gkeys:  # reconnected: the keyboard forgot software control
+                self.dev.gkeys.enable_software_control(True)
+            return
+        if not p.script_enabled or not p.script.strip():
+            return
+        host = SessionScriptHost(self)
+        if not scripting.available():
+            host.error(scripting.MISSING)
+            log.warning("%s: %s", self.dev.name, scripting.MISSING)
+            return
+        self.script_host = host
+        self.script = scripting.ScriptRunner(p.script, host, f"{self.dev.name}/{p.name}").start()
+        self.script.post("PROFILE_ACTIVATED")
+        if self.dev.gkeys:
+            self.dev.gkeys.enable_software_control(True)
+        log.info("%s: script running", self.dev.name)
+
+    def stop_script(self) -> None:
+        if self.script is None:
+            return
+        self.script.stop()
+        self.script = None
+        if self.script_host:
+            self.script_host.close()
+        if self.dev.gkeys:
+            try:
+                self.dev.gkeys.enable_software_control(False)
+            except (HIDPPError, DeviceOffline, TimeoutError, OSError):
+                pass
 
     def _apply_lighting(self) -> None:
         light = self.profile.lighting or {}
@@ -182,6 +385,7 @@ class Session:
 
     def release(self) -> None:
         dev = self.dev
+        self.stop_script()
         try:
             if self.spy:
                 self.spy.stop()
@@ -256,6 +460,16 @@ class Session:
                 for i in released:
                     self.release_button(i)
                 return
+        if self.script and self.dev.gkeys:
+            mask = self.dev.gkeys.parse(msg)
+            if mask is not None:
+                pressed, released = bitmask_changes(self.gkeys_down, mask)
+                self.gkeys_down = mask
+                for i in pressed:
+                    self.script.post("G_PRESSED", i + 1, "kb")
+                for i in released:
+                    self.script.post("G_RELEASED", i + 1, "kb")
+                return
         if self.lighting_claimed and isinstance(self.dev.rgb, lighting.RGBEffects):
             active = self.dev.rgb.activity(msg)
             if active is not None:
@@ -290,6 +504,7 @@ class Session:
             for c in codes:
                 self.vinput.key(c, True)
             self.held_codes[i] = codes
+        self._script_button("MOUSE_BUTTON_PRESSED", i)
 
     def release_button(self, i: int) -> None:
         codes = self.held_codes.pop(i, [])
@@ -303,10 +518,71 @@ class Session:
             macro = self.profile.macro(a.macro)
             if macro:
                 self.runner.release(f"{self.dev.key}:{i}", macro)
+        self._script_button("MOUSE_BUTTON_RELEASED", i)
+
+    # -- script support ------------------------------------------------------------------------
+    def _script_button(self, event: str, i: int) -> None:
+        if self.script is None:
+            return
+        n = self.script_numbers.get(i, i + 1)
+        if n == 1 and not self.script_host.primary_events:
+            return  # like G HUB: the left button is reported only after EnablePrimaryMouseButtonEvents
+        self.script.post(event, n, "mouse")
+
+    def lua_buttons_down(self) -> set[int]:
+        """Mouse buttons held on this device, numbered like IsMouseButtonPressed (1 left, 2 middle, 3 right, 4, 5)."""
+        out = set()
+        for i in range(self.spy.count if self.spy else 0):
+            if self.buttons_down & (1 << i):
+                a = self.pressed.get(i) or self.action_for(i)
+                if a.kind == "mouse" and a.button in scripting.HID_BUTTON_TO_LUA:
+                    out.add(scripting.HID_BUTTON_TO_LUA[a.button])
+        return out
+
+    def peer(self, kind: str) -> "Session | None":
+        try:
+            return next((s for s in self.peers() if s.dev.kind == kind), None)
+        except RuntimeError:  # sessions changed while we looked
+            return None
+
+    def on_main_thread(self, fn) -> None:
+        """Run ``fn`` on the daemon's thread, which owns the device state (scripts run on their own)."""
+        if self.events is None:
+            fn()
+        else:
+            self.events.put(("call", self, fn))
+
+    def stages(self) -> list[int]:
+        return self.dpi_override or self.profile.dpi_stages
+
+    def set_dpi_table(self, table: list[int], index: int) -> None:
+        if not self.dev.dpi:
+            return
+        self.dpi_override = list(table)
+        self.dpi_index = index
+        self.dev.dpi.set(table[index])
+        log.info("%s: script set DPI %d", self.dev.name, table[index])
+
+    def set_backlight(self, color: int) -> None:
+        """Whole-keyboard colour from a script. Not saved to the keyboard; the profile's lighting returns on reapply."""
+        rgb, pk = self.dev.rgb, self.dev.per_key
+        if rgb is None:
+            return
+        if self.animator:
+            self.animator.stop()
+            self.animator = None
+        if not self.lighting_claimed:
+            rgb.claim()
+            self.lighting_claimed = True
+        for z in range(len(rgb.zones)):
+            if rgb.zones[z].effect_by_id(0x01):
+                rgb.set_effect(z, lighting.Effect(0x01, color=color), persist=False)
+        if pk:
+            pk.set_colors({z: color for z in pk.zones})
 
     def _special(self, a: Action, down: bool) -> None:
         f = a.function
-        stages = self.profile.dpi_stages
+        stages = self.stages()
         dpi = self.dev.dpi
         if f == 0x0B:  # G-Shift while held
             self.gshift = down
@@ -324,7 +600,7 @@ class Session:
             elif f == 0x05:
                 self.dpi_index = (self.dpi_index + 1) % len(stages)
             else:
-                self.dpi_index = self.profile.default_dpi
+                self.dpi_index = min(self.profile.default_dpi, len(stages) - 1)
             dpi.set(stages[self.dpi_index])
             log.info("%s: DPI %d", self.dev.name, stages[self.dpi_index])
         elif f in (0x01, 0x02, 0x10, 0x11) and self.vinput:
@@ -383,6 +659,8 @@ class Daemon:
                 profile = profiles.load_profile(dev.key, name)
                 dev.hidpp.swid = DAEMON_SW_ID
                 session = Session(dev, profile, self.events, self.runner, self.vinput)
+                # itself first: its script may start before it is registered below
+                session.peers = lambda s=session: [s] + [x for x in list(self.sessions.values()) if x is not s]
                 session.profile_mtime = _profile_mtime(dev.key, name)
                 dev.hidpp.add_handler(lambda m, s=session: self.events.put(("msg", s, m)))
                 dev.hidpp.start_listener()
@@ -422,15 +700,19 @@ class Daemon:
                     item[1].on_activity(item[2])
                 elif item[0] == "reapply":
                     item[1].apply()
+                elif item[0] == "call":
+                    if self.sessions.get(item[1].dev.key) is item[1]:  # skip calls for a session that ended
+                        item[2]()
                 elif item[0] == "reload":
                     for key in list(self.sessions):
                         self.end(key)
                     self.scan()
-            except (HIDPPError, DeviceOffline, TimeoutError) as e:
+            except (HIDPPError, DeviceOffline, TimeoutError, ValueError) as e:
                 log.warning("device request failed: %s", e)
             except OSError as e:
                 s = item[1]
                 log.warning("%s: lost (%s)", s.dev.name, e)
+                s.stop_script()
                 self.sessions.pop(s.dev.key, None)
         self.shutdown()
 
@@ -438,6 +720,8 @@ class Daemon:
         self.runner.stop_all()
         for key in list(self.sessions):
             self.end(key)
+        if _input_state:
+            _input_state.close()
         if self.vinput:
             self.vinput.close()
         log.info("logi-ghubd stopped")

@@ -8,7 +8,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, keys, profiles
+from . import __version__, keys, profiles, scripting
 from .actions import Action, parse_action
 from .device import LogiDevice, find_devices, select_device
 from .features import lighting
@@ -398,6 +398,12 @@ def cmd_profile(args) -> None:
         for change in profiles.write_to_onboard(memory, prof, args.slot, dev.binding_count()):
             print(" -", change)
         return
+    if sub == "script":
+        cmd_profile_script(args, _device(args))
+        return
+    if sub == "log":
+        cmd_profile_log(args, _device(args))
+        return
     if sub == "activate":
         dev = _device(args)
         if args.name.lower() in ("none", "onboard"):
@@ -407,6 +413,78 @@ def cmd_profile(args) -> None:
             profiles.load_profile(dev.key, args.name)
             profiles.set_active(dev.key, args.name)
             print(f"daemon will run '{args.name}' in host mode on {dev.name}")
+
+
+def _read_source(path: str) -> str:
+    return sys.stdin.read() if path == "-" else Path(path).read_text()
+
+
+def cmd_profile_script(args, dev: LogiDevice) -> None:
+    prof = profiles.load_profile(dev.key, args.name)
+    changed = False
+    if args.set:
+        source = _read_source(args.set)
+        err = scripting.check(source)
+        if err and not args.force:
+            raise SystemExit(f"{err}\nnot saved; fix it or add --force")
+        prof.script, changed = source, True
+    if args.remove:
+        prof.script, changed = "", True
+    if args.enable or args.disable:
+        prof.script_enabled, changed = bool(args.enable), True
+    if changed:
+        profiles.save_profile(prof)
+        state = "enabled" if prof.script_enabled else "disabled"
+        print(f"saved; script {state}" if prof.script else "saved; no script")
+        if profiles.get_active().get(dev.key) == prof.name:
+            print("the daemon restarts the script now")
+        return
+    if not prof.script:
+        print(f"'{prof.name}' has no script (add one with --set FILE)")
+        return
+    if not prof.script_enabled:
+        print("-- disabled", file=sys.stderr)
+    print(prof.script, end="" if prof.script.endswith("\n") else "\n")
+
+
+def cmd_profile_log(args, dev: LogiDevice) -> None:
+    path = scripting.log_path(dev.key, args.name)
+    if args.clear:
+        path.write_text("")
+        return
+    print(scripting.read_log(path), end="")
+    if args.follow:
+        import time
+
+        pos = path.stat().st_size if path.exists() else 0
+        try:
+            while True:
+                time.sleep(0.5)
+                size = path.stat().st_size if path.exists() else 0
+                if size < pos:
+                    pos = 0  # cleared
+                if size > pos:
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        f.seek(pos)
+                        print(f.read(), end="", flush=True)
+                    pos = size
+        except KeyboardInterrupt:
+            pass
+
+
+def cmd_script(args) -> None:
+    source = _read_source(args.file)
+    if args.script_cmd == "check":
+        err = scripting.check(source)
+        if err:
+            raise ValueError(err)
+        print("ok")
+        return
+    events = scripting.parse_events(args.event or ["PROFILE_ACTIVATED"], family=args.family)
+    actions, version = scripting.simulate(source, events, limit_ms=args.limit)
+    print(f"dry run ({version or 'Lua'}), nothing is sent to the computer:")
+    for line in actions:
+        print(line)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -495,6 +573,28 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--yes", action="store_true")
     q = psp.add_parser("activate", help="have the daemon run a profile in host mode ('none' to stop)")
     q.add_argument("name")
+    q = psp.add_parser("script", help="show or change a profile's Lua script (runs in host mode)")
+    q.add_argument("name")
+    q.add_argument("--set", metavar="FILE", help="use the Lua in FILE ('-' for standard input)")
+    q.add_argument("--force", action="store_true", help="save even if the script doesn't compile")
+    q.add_argument("--enable", action="store_true")
+    q.add_argument("--disable", action="store_true")
+    q.add_argument("--remove", action="store_true")
+    q = psp.add_parser("log", help="what the profile's script printed (OutputLogMessage)")
+    q.add_argument("name")
+    q.add_argument("-f", "--follow", action="store_true")
+    q.add_argument("--clear", action="store_true")
+
+    p = sp.add_parser("script", help="check or dry-run a Lua script file (G HUB's Lua API)")
+    ssp = p.add_subparsers(dest="script_cmd", required=True)
+    q = ssp.add_parser("check", help="compile only")
+    q.add_argument("file", help="Lua file ('-' for standard input)")
+    q = ssp.add_parser("run", help="feed events to the script and print what it would do, without sending input")
+    q.add_argument("file", help="Lua file ('-' for standard input)")
+    q.add_argument("-e", "--event", action="append",
+                   help="EVENT[:ARG][@MS], e.g. MOUSE_BUTTON_PRESSED:4 or MOUSE_BUTTON_RELEASED:4@500 (default: PROFILE_ACTIVATED)")
+    q.add_argument("--family", default="kb", choices=list(scripting.FAMILIES), help="family for G and M key events")
+    q.add_argument("--limit", type=float, default=10_000, help="stop after this many simulated milliseconds")
 
     sp.add_parser("daemon", help="run the host-mode daemon in the foreground")
 
@@ -510,7 +610,8 @@ def main(argv: list[str] | None = None) -> int:
 
             return daemon_main([])
         handler = {"list": cmd_list, "info": cmd_info, "probe": cmd_probe, "dpi": cmd_dpi, "rate": cmd_rate,
-                   "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile}[args.cmd]
+                   "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile,
+                   "script": cmd_script}[args.cmd]
         handler(args)
     except (LookupError, ValueError, HIDPPError, DeviceOffline, TimeoutError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)
