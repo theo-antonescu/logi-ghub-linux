@@ -16,7 +16,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import __version__, keyremap, keys, lightfx, profiles  # noqa: E402
+from .. import __version__, chatter, keyremap, keys, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
 from ..device import LogiDevice, find_devices  # noqa: E402
 from ..features import lighting  # noqa: E402
@@ -1317,11 +1317,67 @@ class DevicePane(Gtk.Box):
             r = Adw.ActionRow(title=title, subtitle=GLib.markup_escape_text(str(value)))
             r.add_css_class("property")
             g.add(r)
+        if self.dev.kind == "keyboard" and self.dev.hidpp is not None:
+            self._double_press_group()
         g2 = self.add_group("info", Adw.PreferencesGroup(title="HID++ features"))
         expander = Adw.ExpanderRow(title=f"{len(info.get('features', {}))} features")
         for name, idx in info.get("features", {}).items():
             expander.add_row(Adw.ActionRow(title=name, subtitle=f"index {idx}"))
         g2.add(expander)
+
+
+    def _double_press_group(self):
+        key = self.dev.key
+        s = chatter.load(key)
+        g = self.add_group("info", Adw.PreferencesGroup(
+            title="Double presses",
+            description="Worn or dusty switches sometimes type a key twice for one press. The logi-ghubd service can "
+                        "drop a second press that comes too soon after the key was let go. It works while the keyboard "
+                        "is connected to this computer, with or without Host mode, but not over Bluetooth to other "
+                        "devices: nothing can be stored on the keyboard to do this."))
+        on = Adw.SwitchRow(title="Block double presses", active=s.enabled)
+        ms = Adw.SpinRow.new_with_range(5, chatter.MAX_MS, 5)
+        ms.set_title("Drop a second press within")
+        ms.set_subtitle("milliseconds after the key was let go. Raise it if doubles still get through; lower it if "
+                        "quick double letters go missing.")
+        ms.set_value(s.threshold_ms)
+        ms.set_sensitive(s.enabled)
+
+        def save(*_):
+            s.enabled = on.get_active()
+            s.threshold_ms = int(ms.get_value())
+            try:
+                chatter.save(key, s)  # the service reads it again within a second or two
+            except OSError as e:
+                self.fail(e)
+
+        on.connect("notify::active", lambda *_: (save(), self.build_info()))
+        ms.connect("notify::value", save)
+        g.add(on)
+        g.add(ms)
+        if s.enabled:
+            problem = self.key_access_problem()
+            if not problem and not daemon_running() and not str(self.dev.info.path).startswith("fake:"):
+                problem = "The logi-ghubd service isn't running. Turn on “Run in the background at login” in the menu."
+            if problem:
+                warn = Adw.ActionRow(title="Not blocking yet", subtitle=GLib.markup_escape_text(problem))
+                warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+                g.add(warn)
+        stats = chatter.load_stats().get(key, {})
+        blocked = sorted(((n, e) for n, e in stats.items() if e.get("blocked")), key=lambda x: -x[1]["blocked"])
+        if blocked:
+            exp = Adw.ExpanderRow(title=f"{sum(e['blocked'] for _, e in blocked)} double presses blocked",
+                                  subtitle="by key, with how soon after the key was let go they came")
+            for name, e in blocked:
+                text = f"{e['blocked']} blocked, {e['blocked_min_ms']:g} to {e['blocked_max_ms']:g} ms"
+                if e.get("close"):
+                    text += f" · {e['close']} let through near the limit (closest {e['close_min_ms']:g} ms)"
+                exp.add_row(Adw.ActionRow(title=GLib.markup_escape_text(layout_label(name)), subtitle=text))
+            g.add(exp)
+            reset = Gtk.Button(label="Reset counts", valign=Gtk.Align.CENTER)
+            reset.add_css_class("flat")
+            reset.connect("clicked", lambda *_: (chatter.reset_stats(key), chatter.save(key, s), self.build_info()))
+            g.set_header_suffix(reset)
 
 
 class MainWindow(Adw.ApplicationWindow):

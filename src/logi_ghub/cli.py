@@ -8,7 +8,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, keyremap, keys, profiles
+from . import __version__, chatter, keyremap, keys, profiles
 from .actions import Action, parse_action
 from .device import LogiDevice, find_devices, select_device
 from .features import lighting
@@ -44,6 +44,56 @@ def _rgb(hexstr: str) -> int:
 
 
 # --- commands ----------------------------------------------------------------
+def cmd_double_press(args) -> None:
+    dev = select_device(_devices(args), args.device)  # the keyboard may be asleep; settings don't need it
+    dev.close()
+    settings = chatter.load(dev.key)
+    changed = False
+    if args.state in ("on", "off"):
+        settings.enabled = args.state == "on"
+        changed = True
+    if args.ms is not None:
+        settings.threshold_ms = chatter._ms(args.ms)
+        changed = True
+    for spec in args.key or []:
+        name, sep, ms = spec.partition("=")
+        name = keyremap.canonical(name.strip())
+        keyremap.key_code(name)
+        if not sep or ms.strip() in ("", "default"):
+            settings.keys.pop(name, None)
+        else:
+            settings.keys[name] = chatter._ms(ms)
+        changed = True
+    if args.reset_stats:
+        chatter.reset_stats(dev.key)
+        changed = True  # saving the settings makes the daemon read the stats again
+    if changed:
+        chatter.save(dev.key, settings)
+    if dev.kind != "keyboard":
+        print(f"note: {dev.name} is not a keyboard")
+    if settings.enabled:
+        print(f"{dev.name}: double-press filter on, a press under {settings.threshold_ms} ms after the same key "
+              "was let go is dropped")
+    else:
+        print(f"{dev.name}: double-press filter off ({settings.threshold_ms} ms when on)")
+    for name, ms in sorted(settings.keys.items()):
+        print(f"  {name:<14} {ms} ms" + (" (never blocked)" if ms == 0 else ""))
+    if changed and settings.enabled:
+        print("logi-ghubd picks this up within a few seconds (it must be running: systemctl --user start logi-ghubd)")
+    stats = chatter.load_stats().get(dev.key, {})
+    if not stats:
+        print("nothing blocked yet")
+        return
+    print("since the last --reset-stats:")
+    for name, e in sorted(stats.items(), key=lambda kv: (-kv[1].get("blocked", 0), kv[0])):
+        line = f"  {name:<14}"
+        if e.get("blocked"):
+            line += f" {e['blocked']} blocked ({e['blocked_min_ms']:g}-{e['blocked_max_ms']:g} ms after release)"
+        if e.get("close"):
+            line += f" {e['close']} let through under twice the limit (closest {e['close_min_ms']:g} ms)"
+        print(line)
+
+
 def cmd_list(args) -> None:
     for d in _devices(args):
         state = "online" if d.online else f"offline ({d.error})"
@@ -527,6 +577,12 @@ def main(argv: list[str] | None = None) -> int:
     q = psp.add_parser("activate", help="have the daemon run a profile in host mode ('none' to stop)")
     q.add_argument("name")
 
+    p = sp.add_parser("double-press", help="drop key chatter (a key typing twice), run by the daemon")
+    p.add_argument("state", nargs="?", choices=["on", "off", "status"], default="status")
+    p.add_argument("--ms", type=int, help=f"drop a press this soon after the same key was let go (default {chatter.DEFAULT_MS})")
+    p.add_argument("--key", action="append", metavar="KEY=MS",
+                   help="own limit for one key (0: never block it; KEY= goes back to the default)")
+    p.add_argument("--reset-stats", action="store_true", help="forget the blocked-press counts")
     sp.add_parser("daemon", help="run the host-mode daemon in the foreground")
 
     args = ap.parse_args(argv)
@@ -541,7 +597,8 @@ def main(argv: list[str] | None = None) -> int:
 
             return daemon_main([])
         handler = {"list": cmd_list, "info": cmd_info, "probe": cmd_probe, "dpi": cmd_dpi, "rate": cmd_rate,
-                   "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile}[args.cmd]
+                   "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile,
+                   "double-press": cmd_double_press}[args.cmd]
         handler(args)
     except (LookupError, ValueError, HIDPPError, DeviceOffline, TimeoutError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)

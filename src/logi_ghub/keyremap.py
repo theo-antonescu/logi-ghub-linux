@@ -9,6 +9,9 @@ profile's action for the keys that have one. Nothing is written to the
 keyboard. When the daemon stops, the grab ends and the keyboard types
 normally again.
 
+The same grab also runs the double-press filter (chatter.py), which can be
+on without any key assignments.
+
 Safety: holding Backspace + Esc + Enter together always releases the keyboard.
 """
 
@@ -260,8 +263,9 @@ class KeyRemapper:
     """
 
     def __init__(self, name: str, nodes: list[EventNode], mapping: dict[int, Action], pointer=None, runner=None,
-                 macros=None, tag: str = "keys", virtual_factory=None):
+                 macros=None, tag: str = "keys", virtual_factory=None, chatter=None):
         self.name = name
+        self.chatter = chatter  # chatter.ChatterFilter: drops double presses before the mapper sees them
         self.nodes = nodes
         self.mapping = mapping
         self.pointer = pointer
@@ -306,7 +310,10 @@ class KeyRemapper:
         self._wake_r, self._wake_w = os.pipe()
         self.thread = threading.Thread(target=self._run, name=f"keys-{self.name}", daemon=True)
         self.thread.start()
-        log.info("%s: %d key assignment(s) active (%s)", self.name, len(self.mapping),
+        doing = [f"{len(self.mapping)} key assignment(s)"] if self.mapping else []
+        if self.chatter is not None:
+            doing.append("double-press filter")
+        log.info("%s: %s active (%s)", self.name, " and ".join(doing) or "pass-through",
                  ", ".join(n.path for n in self.nodes))
 
     def _wait_for_keys_up(self, timeout: float = 3.0) -> None:
@@ -366,9 +373,12 @@ class KeyRemapper:
         if not data:
             raise OSError(errno.ENODEV, "input device gone")
         for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
-            _s, _us, etype, code, value = EVENT.unpack_from(data, off)
-            if etype == keys.EV_KEY:
-                self.mapper.handle(code, value)
+            sec, usec, etype, code, value = EVENT.unpack_from(data, off)
+            if etype != keys.EV_KEY:
+                continue
+            if self.chatter is not None and not self.chatter.allow(code, value, sec + usec / 1e6):
+                continue
+            self.mapper.handle(code, value)
 
     def _forward_leds(self, fd: int) -> None:
         """The desktop sets Caps/Num Lock LEDs on the virtual keyboard; pass that on to the real one."""

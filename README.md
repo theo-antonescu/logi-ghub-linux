@@ -147,6 +147,31 @@ udev rule grants to the logged-in user (re-run `./scripts/install.sh --udev`
 after updating). Keys handled inside the keyboard (brightness, game mode, the
 logo) send nothing to the computer and can't be reassigned.
 
+## Double presses (key chatter)
+
+Some G915 keys type twice for one press. `logi-ghubd` can drop the second
+press when it comes less than a set time (40 ms by default) after the same key
+was let go; a real double letter leaves a longer gap. Turn it on in the app
+(Device page, "Double presses") or with:
+
+```sh
+logi-ghub-cli -d keyboard double-press on           # status: logi-ghub-cli -d keyboard double-press
+logi-ghub-cli -d keyboard double-press --ms 60       # if doubles still get through
+logi-ghub-cli -d keyboard double-press --key E=80    # a longer limit for one bad key (0: never block it)
+```
+
+It uses the same input grab as key assignments (and the same udev rule and
+Backspace + Esc + Enter escape, which turns it off until the settings change),
+but needs no host-mode profile: the keyboard keeps its on-board profile and
+lighting. The status shows, per key, how many presses were blocked and how
+soon after the release they came, and how close the quickest presses that got
+through were, to tune the limit. Only counts and timings are stored.
+
+It works while the keyboard is connected to this computer. Nothing can make it
+follow the keyboard over Bluetooth to another device: the keyboard has no
+debounce setting that can be changed, and G HUB's Lua scripts run inside G HUB
+on the computer, not on the keyboard.
+
 ## How it works
 
 Everything is plain HID++ 2.0 over `/dev/hidraw*`, with no dependencies beyond
