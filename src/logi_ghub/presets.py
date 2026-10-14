@@ -11,12 +11,12 @@ from .lightfx import scale
 # A high-contrast Python syntax theme, as LED colours (saturated, so they read on black keycaps):
 # letters blue like strings, digits green like numbers, special keys yellow; the rest follows
 # the owner's G HUB lighting (red Esc/Enter/Backspace/Super, ...), with purple F-keys.
-PY_STRING = 0x1E78FF  # letters
+PY_STRING = 0x3C96FF  # letters
 PY_NUMBER = 0x00FF00  # 0-9: terminal green
 PY_SPECIAL = 0xFFC000  # Tab, Caps, Shift, Ctrl, Alt, Menu, `
 PY_RED = 0xFF1010  # Esc, Backspace, Enter, Super
 PY_PUNCT = 0xFFFFFF  # punctuation and - = / \
-PY_PURPLE = 0x9000FF  # F1-F12
+PY_PURPLE = 0xB000D8  # F1-F12
 PY_SKY = 0x40B0FF  # Space, arrows
 PY_DEEP_BLUE = 0x3060FF  # PrtSc, ScrLk, Pause
 PY_MAGENTA = 0xFF20C0  # media keys and brightness
