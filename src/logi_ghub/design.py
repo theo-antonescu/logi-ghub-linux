@@ -42,6 +42,7 @@ EFFECTS = {
     "sparkle": "Sparkles",
     "heartbeat": "Heartbeat",
     "raise": "Raise the flag",
+    "flags": "Flags (whole keyboard, in turn)",
 }
 STRIPED = {"ripple", "sparkle", "heartbeat", "raise"}  # effects that lay the colours out as stripes
 DIRECTIONS = {
@@ -86,11 +87,12 @@ class Layer:
     floor: float = 0.3  # ripple/breathing: dimmest level, 0-1
     spread: float = 0.5  # sequence/ripple/rainbow: how far apart in the cycle the first and last keys are
     background: int | None = None  # raise/sparkle: what keys show where the effect isn't lit (None = dark)
+    flags: list[str] = field(default_factory=list)  # flags effect: the flags shown in turn (keys of FLAGS)
 
     def to_dict(self) -> dict:
         return {"name": self.name, "keys": list(self.keys), "effect": self.effect, "colors": [int(c) for c in self.colors],
                 "period_ms": self.period_ms, "direction": self.direction, "fade": self.fade, "floor": self.floor,
-                "spread": self.spread, "background": self.background}
+                "spread": self.spread, "background": self.background, "flags": list(self.flags)}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Layer":
@@ -98,11 +100,18 @@ class Layer:
                    colors=[int(c) for c in d.get("colors", [0xFFFFFF])] or [0xFFFFFF],
                    period_ms=int(d.get("period_ms", 2000)), direction=d.get("direction", "none"),
                    fade=bool(d.get("fade", True)), floor=float(d.get("floor", 0.3)), spread=float(d.get("spread", 0.5)),
-                   background=None if d.get("background") is None else int(d["background"]))
+                   background=None if d.get("background") is None else int(d["background"]),
+                   flags=list(d.get("flags", [])))
 
     @property
     def animated(self) -> bool:
         return self.effect != "static" and not (self.effect == "sequence" and len(self.colors) < 2)
+
+    @property
+    def cycle_ms(self) -> int:
+        """Time until the layer repeats: one period, or one period per flag for the flags effect."""
+        n = max(1, len(self.flags)) if self.effect == "flags" else 1
+        return max(50, self.period_ms) * n
 
 
 @dataclass
@@ -123,7 +132,7 @@ class Design:
 
     def loop_ms(self, limit: int = 20000) -> int:
         """A length after which every layer is back where it started (or ``limit``, if that is shorter)."""
-        periods = [max(50, layer.period_ms) for layer in self.layers if layer.animated]
+        periods = [layer.cycle_ms for layer in self.layers if layer.animated]
         if not periods:
             return 0
         loop = 1
@@ -214,6 +223,61 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
     return base
 
 
+# Flags as colour at a position (fx, fy from 0 to 1 across the keys, y down). LED-friendly colours.
+FLAG_RED, FLAG_WHITE = 0xFF0010, 0xFFFFFF
+# A maple leaf in a unit square (y down), simplified from the Canadian flag
+MAPLE_LEAF = [(0.50, 0.00), (0.59, 0.17), (0.71, 0.11), (0.66, 0.40), (0.85, 0.22), (0.81, 0.34), (0.99, 0.37),
+              (0.87, 0.51), (0.91, 0.59), (0.61, 0.70), (0.65, 0.80), (0.53, 0.77), (0.54, 1.00), (0.46, 1.00),
+              (0.47, 0.77), (0.35, 0.80), (0.39, 0.70), (0.09, 0.59), (0.13, 0.51), (0.01, 0.37), (0.19, 0.34),
+              (0.15, 0.22), (0.34, 0.40), (0.29, 0.11), (0.41, 0.17)]
+
+
+def _inside(x: float, y: float, poly) -> bool:
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _romania(fx: float, fy: float) -> int:
+    return (0x0030FF, 0xFFC800, 0xFF0010)[min(2, int(fx * 3))]
+
+
+def _canada(fx: float, fy: float) -> int:
+    if fx < 0.25 or fx > 0.75:
+        return FLAG_RED
+    # the leaf fills most of the white square in the middle; the keyboard is about 2.8 times wider than tall
+    lx, ly = (fx - 0.33) / 0.34, (fy - 0.04) / 0.94
+    return FLAG_RED if 0 <= lx <= 1 and 0 <= ly <= 1 and _inside(lx, ly, MAPLE_LEAF) else FLAG_WHITE
+
+
+FLAGS = {"romania": ("Romania", _romania), "canada": ("Canada", _canada)}
+
+
+def _flags_effect(layer: "Layer", fx: float, fy: float, t: float) -> int:
+    """Each flag fills the keys and ripples for one period, then the next wipes in from the left."""
+    flags = [FLAGS[f][1] for f in layer.flags if f in FLAGS] or [_romania]
+    per = max(50, layer.period_ms) / 1000
+    pos = (t / per) % len(flags)
+    i = int(pos)
+    within = pos - i
+    wipe = 0.18  # last part of each flag's time: the next one sweeps in
+    current = flags[i]
+    if within > 1 - wipe and fx < (within - (1 - wipe)) / wipe * 1.05:
+        current = flags[(i + 1) % len(flags)]
+    # brightness ripple, one wave per flag, in a few steps so whole columns change together (this keeps
+    # the animation small enough to store on the keyboard)
+    wave = 0.5 + 0.5 * math.sin(2 * math.pi * (t / per - fx * layer.spread))
+    steps = 4
+    level = layer.floor + (1 - layer.floor) * round(wave * (steps - 1)) / (steps - 1)
+    return scale(current(fx, fy), level)
+
+
 class DesignRenderer:
     """Colours of every key of a design at a point in time."""
 
@@ -255,6 +319,8 @@ class DesignRenderer:
                 elif layer.effect == "breathing":
                     level = 0.5 - 0.5 * math.cos(2 * math.pi * cycle)
                     c = scale(colors[0], layer.floor + (1 - layer.floor) * level)
+                elif layer.effect == "flags":
+                    c = _flags_effect(layer, fx, fy, t)
                 elif layer.effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):
                     c = _shape_effect(layer, colors, zone, fx, fy, cycle)
                 else:

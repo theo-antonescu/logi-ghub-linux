@@ -46,7 +46,7 @@ TRAILER = b"\x03" + bytes(15)  # G HUB ends every upload with this packet; witho
 HEADER_SIZE = 0x4B
 RECORD = 17
 MAX_RECORDS = (BODY_SIZE - HEADER_SIZE) // RECORD
-WRITABLE_SLOTS = (1,)  # brightness + 9; slot 0 (brightness + 8) is never written
+WRITABLE_SLOTS = (1,)  # brightness + 9; slot 0 (brightness + 8) only when the owner explicitly asks (allow_slot0)
 OP_INDIVIDUAL, OP_RANGE, OP_SINGLE_VALUE, OP_FRAME_END = 0x1B, 0x5B, 0x6B, 0x7B
 FN_INDIVIDUAL, FN_CONSECUTIVE, FN_RANGE, FN_SINGLE_VALUE, FN_FRAME_END = 1, 2, 5, 6, 7
 
@@ -197,8 +197,8 @@ class Uploader:
         if msg.sub_id == self.index and msg.swid == 0:
             self._ready.set()
 
-    def upload(self, slot: int, data: bytes, progress=None) -> None:
-        if slot not in WRITABLE_SLOTS:
+    def upload(self, slot: int, data: bytes, progress=None, allow_slot0: bool = False) -> None:
+        if slot not in WRITABLE_SLOTS and not (slot == 0 and allow_slot0):
             raise ValueError(f"refusing to write slot {slot}: only slot 1 (brightness + 9) may be changed")
         if len(data) % 16 or len(data) < HEADER_SIZE + 16 or data[0] != 0x01 or data[-16:] != TRAILER:
             raise ValueError("not an RGB animation file")

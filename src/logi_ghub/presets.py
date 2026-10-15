@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from . import layout
 from .design import Design, Layer
 
 # A high-contrast Python syntax theme, as LED colours (saturated, so they read on black keycaps):
@@ -51,7 +52,15 @@ def python_romania_design() -> Design:
     return Design("Python + Romania", layers)
 
 
+def romania_canada_design() -> Design:
+    """The whole keyboard as one big Romanian flag, rippling, then a Canadian flag, in turn."""
+    every = [c.name for c in layout.keycaps()]
+    return Design("Romania + Canada", [Layer("Flags", every, "flags", [], period_ms=6000, floor=0.55, spread=1.5,
+                                             flags=["romania", "canada"])])
+
+
 # Ready-made designs to start from: key -> (title, design factory)
 DESIGNS = {
     "python-romania": ("Python + Romania", python_romania_design),
+    "romania-canada": ("Romania + Canada", romania_canada_design),
 }

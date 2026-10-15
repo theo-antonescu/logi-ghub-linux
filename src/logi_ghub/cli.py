@@ -270,13 +270,22 @@ def cmd_lighting(args) -> None:
 
         if args.name not in presets.DESIGNS:
             raise SystemExit("presets: " + ", ".join(presets.DESIGNS))
-        if not args.yes:
-            raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
+        slot = _animation_slot(args)
         title, make = presets.DESIGNS[args.name]
         _frames, period, data = fit_frames(make(), dev.per_key.zones)
-        rgb_store.Uploader(dev.hidpp).upload(1, data)
-        rgb_store.save_local(dev.key, 1, data)
-        print(f"saved '{title}' to brightness + 9 ({period} ms per frame)")
+        rgb_store.Uploader(dev.hidpp).upload(slot, data, allow_slot0=slot == 0)
+        rgb_store.save_local(dev.key, slot, data)
+        print(f"saved '{title}' to brightness + {8 + slot} ({period} ms per frame)")
+        return
+    if sub == "upload":
+        from .features import rgb_store
+
+        slot = _animation_slot(args)
+        data = Path(args.file).read_bytes()
+        info = rgb_store.parse_file(data)
+        rgb_store.Uploader(dev.hidpp).upload(slot, data, allow_slot0=slot == 0)
+        rgb_store.save_local(dev.key, slot, data)
+        print(f"saved '{info['name']}' ({len(info['frames'])} frames) to brightness + {8 + slot}")
         return
     if sub == "store":
         from .features import rgb_store
@@ -423,6 +432,15 @@ def cmd_profile(args) -> None:
             print(f"daemon will run '{args.name}' in host mode on {dev.name}")
 
 
+def _animation_slot(args) -> int:
+    """Slot number (0 or 1) for brightness + 8 / + 9, after the confirmations the command needs."""
+    if args.slot == 8 and not args.replace_brightness_8:
+        raise SystemExit("brightness + 8 is protected; add --replace-brightness-8 to overwrite it (keep a backup!)")
+    if not args.yes:
+        raise SystemExit(f"this replaces the custom animation on brightness + {args.slot}; add --yes to confirm")
+    return args.slot - 8
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="logi-ghub-cli", description="Configure Logitech G devices on Linux")
     ap.add_argument("--version", action="version", version=__version__)
@@ -470,8 +488,15 @@ def main(argv: list[str] | None = None) -> int:
     lsp = p.add_subparsers(dest="lighting_cmd", required=True)
     lsp.add_parser("info")
     lsp.add_parser("saved", help="lighting saved in the keyboard's on-board profiles (read-only)")
-    q = lsp.add_parser("preset", help="store a ready-made animation on brightness + 9 (python-romania)")
+    q = lsp.add_parser("preset", help="store a ready-made design on brightness + 9 (python-romania, romania-canada)")
     q.add_argument("name")
+    q.add_argument("--slot", type=int, choices=[8, 9], default=9, help="brightness + 8 or + 9 (default 9)")
+    q.add_argument("--replace-brightness-8", action="store_true", help="needed with --slot 8: it overwrites that slot")
+    q.add_argument("--yes", action="store_true")
+    q = lsp.add_parser("upload", help="put an animation file (a backup, say) on brightness + 8 or + 9")
+    q.add_argument("file")
+    q.add_argument("--slot", type=int, choices=[8, 9], default=9)
+    q.add_argument("--replace-brightness-8", action="store_true")
     q.add_argument("--yes", action="store_true")
     q = lsp.add_parser("store", help="save a computer profile's lighting as the keyboard's brightness + 9 animation")
     q.add_argument("profile", help="computer profile whose painted keys / colour sequence to store")
