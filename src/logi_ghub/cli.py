@@ -172,8 +172,18 @@ def _print_profile(dev: LogiDevice, p: ob.OnboardProfile, active: int) -> None:
 
 def cmd_onboard(args) -> None:
     dev = _device(args)
-    memory = _need(dev.onboard, "on-board profiles", dev)
     sub = args.onboard_cmd
+    if dev.onboard is None and dev.has(F.PROFILE_MANAGEMENT) and sub == "select":  # newer keyboards (G915 X)
+        from .features.profile_fs import ProfileFS
+
+        fs = ProfileFS(dev.hidpp)
+        try:
+            fs.select(args.slot)
+        except ValueError as e:
+            raise SystemExit(str(e)) from None
+        print(f"profile {args.slot} in use" + ("" if fs.active()[0] else " (the computer still controls the lighting)"))
+        return
+    memory = _need(dev.onboard, "on-board profiles", dev)
     if sub == "show":
         active = memory.get_current_profile()
         mode = {1: "on-board", 2: "host"}.get(memory.get_mode(), "?")

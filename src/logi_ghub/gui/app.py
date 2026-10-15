@@ -818,12 +818,23 @@ class DevicePane(Gtk.Box):
             if sp.number == self.stored_active:
                 row.add_prefix(Gtk.Image(icon_name="object-select-symbolic", tooltip_text="The profile the keyboard is using"))
                 row.set_subtitle(row.get_subtitle() + " · in use")
+            else:
+                use = Gtk.Button(label="Use", valign=Gtk.Align.CENTER,
+                                 tooltip_text=f"Switch the keyboard to profile {sp.number} (same as Fn + F{sp.number + 1})")
+                use.connect("clicked", lambda _b, n=sp.number: self._use_stored(n))
+                row.add_suffix(use)
             preview = light.to_lighting()
             if preview is not None:
                 b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Show this in the picture below (approximate)")
                 b.connect("clicked", lambda _b, pv=preview: self._preview_stored(pv))
                 row.add_suffix(b)
             g.add(row)
+
+    def _use_stored(self, number: int):
+        from ..features.profile_fs import ProfileFS
+
+        run_async(lambda: ProfileFS(self.dev.hidpp).select(number),
+                  lambda _r: (self.toast(f"The keyboard is on profile {number}"), self.load()), self.fail)
 
     def _custom_slots_group(self):
         """The keyboard's two custom-animation slots (brightness + 8 and + 9)."""
@@ -838,7 +849,9 @@ class DevicePane(Gtk.Box):
             local = rgb_store.load_local(self.dev.key, slot)
             mine = local is not None and local["name"] == name
             if slot == 0:
-                sub = f"“{name}” (made in G HUB; protected, and its colours can't be read back)"
+                sub = f"“{name}” (made in G HUB; protected" + (
+                    f", backed up on this computer, {len(local['frames'])} frames)" if mine else
+                    ", and its colours can't be read back)")
             elif mine:
                 sub = f"“{name}”, saved from this app ({len(local['frames'])} frames)"
             else:

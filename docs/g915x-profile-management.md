@@ -25,6 +25,16 @@ type 1 returns their names and UUIDs. G HUB never reads the animation frames bac
 * fn 6 `00 00 00` is a query: the reply starts `mode 00 profile`, with mode 1 for on-board and 0 while
   the host owns the keyboard. fn 6 `05` switches to host mode and fn 6 `03` back to on-board; neither
   changes the profile number.
+* fn 9 `81 01 01 00 <profile> 00 63 <crc32>` selects on-board profile `<profile>`; the CRC is the
+  one the directory lists for it (implemented as `ProfileFS.select`). Fn + F2/F3/F4 on the keyboard
+  do the same and send a fn 0 notification `00 <profile>`.
+* G HUB (in its normal, not on-board, mode) never rewrote a profile file: lighting and idle colours
+  changed in its editor are applied live with 0x8071 fn 1 (persist byte 01). Before setting the
+  idle look it sets software control flags `03`, and `05` before the normal look. So a recording
+  of profile writes needs G HUB's on-board memory mode.
+* Seen but not decoded: 0x8071 fn 3 `01 00 01 <01|02> ff 00 04 1e 05 ff` and
+  `01 00 01 01 82 00 ff 1e 05 ff` (writes the value fn 3 `00 00 01` reads), and 0x8071 fn 6
+  `ff 00 01 91`, `00 00 09 80`, `01 00 09 85`.
 * A slot picked with brightness + N on the keyboard is not part of that state, and no query
   tested reports it. Any lighting takeover (0x8071 software control, with or without host mode) makes the
   keyboard forget it within a few seconds of the hand-back, and it then shows the active profile's

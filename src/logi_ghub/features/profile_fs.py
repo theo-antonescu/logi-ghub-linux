@@ -149,6 +149,18 @@ class ProfileFS:
         d = self.dev.call(F.PROFILE_MANAGEMENT, 6, 0, 0, 0)
         return d[0] == 1, d[2]
 
+    def select(self, number: int) -> None:
+        """Make on-board profile ``number`` the one in use, as G HUB does (fn 9 naming the profile and its CRC).
+
+        The keyboard's Fn + F2/F3/F4 do the same for profiles 1-3.
+        """
+        for n, _file, crc in parse_directory(self.read_file(0, 0, DIR_SIZE)):
+            if n == number:
+                self.dev.call(F.PROFILE_MANAGEMENT, 9, 0x81, 0x01, 0x01, number >> 8, number & 0xFF,
+                              PROFILE_SIZE >> 8, PROFILE_SIZE & 0xFF, crc.to_bytes(4, "big"))
+                return
+        raise ValueError(f"there is no on-board profile {number}")
+
     def profiles(self, bank: int = 0) -> list[StoredProfile]:
         entries = parse_directory(self.read_file(bank, 0, DIR_SIZE))
         return [parse_profile(n, f, self.read_file(bank, f, PROFILE_SIZE)) for n, f, _crc in entries]

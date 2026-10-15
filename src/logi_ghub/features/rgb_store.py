@@ -16,9 +16,13 @@ File layout::
     0x30  UUID, 16 bytes
     0x40  frame count (u16), 00 00, 00 00, frame count (u16), frame period ms (u16), brightness %
     0x4b  records of 17 bytes: a per-key lighting (0x8081) command byte and its 16 parameters,
-          exactly as they would be sent: 0x1b individual keys, 0x5b ranges, 0x6b one colour for up
-          to 13 keys, and 0x7b ends a frame: 00, frame index (u16), duration in periods (u16)
-    ...   0xFF up to 12304 bytes, then the trailer packet 03 00 .. 00
+          exactly as they would be sent. The command byte is function << 4 | software id (G HUB
+          has used both 0xB and 0xA): fn 1 individual keys, fn 2 five consecutive keys, fn 5
+          ranges, fn 6 one colour for up to 13 keys, and fn 7 ends a frame: 00, frame index (u16),
+          duration in periods (u16)
+    ...   0xFF padding, then the trailer packet 03 00 .. 00. Byte 7 of the header is the padded
+          size in 256-byte units, without the 32 bytes of header line and trailer (G HUB sizes
+          files to fit; this program always writes 0x30, 12304 bytes)
 
 Only slot 1 is ever written by this program; slot 0 is refused.
 """
@@ -44,6 +48,7 @@ RECORD = 17
 MAX_RECORDS = (BODY_SIZE - HEADER_SIZE) // RECORD
 WRITABLE_SLOTS = (1,)  # brightness + 9; slot 0 (brightness + 8) is never written
 OP_INDIVIDUAL, OP_RANGE, OP_SINGLE_VALUE, OP_FRAME_END = 0x1B, 0x5B, 0x6B, 0x7B
+FN_INDIVIDUAL, FN_CONSECUTIVE, FN_RANGE, FN_SINGLE_VALUE, FN_FRAME_END = 1, 2, 5, 6, 7
 
 
 def _ranges(zones: list[int]) -> list[tuple[int, int]]:
@@ -114,25 +119,29 @@ def parse_file(data: bytes) -> dict:
     frame_count, _a, _b, length, period, brightness = struct.unpack(">HHHHHB", data[0x40:0x4B])
     frames: list[tuple[dict[int, int], int]] = []
     state: dict[int, int] = {}
-    for off in range(HEADER_SIZE, min(len(data), BODY_SIZE) - RECORD + 1, RECORD):
+    for off in range(HEADER_SIZE, len(data) - RECORD + 1, RECORD):
         r = data[off : off + RECORD]
-        op, p = r[0], r[1:]
+        fn, p = r[0] >> 4, r[1:]
         if r == b"\xff" * RECORD:
             break
-        if op == OP_FRAME_END:
+        if fn == FN_FRAME_END:
             frames.append((dict(state), struct.unpack(">H", p[3:5])[0]))
-        elif op == OP_SINGLE_VALUE:
+        elif fn == FN_SINGLE_VALUE:
             c = int.from_bytes(p[0:3], "big")
             for z in p[3:]:
                 if z:
                     state[z] = c
-        elif op == OP_RANGE:
+        elif fn == FN_RANGE:
             for i in range(0, 15, 5):
                 a, b = p[i], p[i + 1]
                 if a or b:
                     for z in range(a, b + 1):
                         state[z] = int.from_bytes(p[i + 2 : i + 5], "big")
-        elif op == OP_INDIVIDUAL:
+        elif fn == FN_CONSECUTIVE:
+            for i in range(5):
+                if p[0] + i < 256:
+                    state[p[0] + i] = int.from_bytes(p[1 + 3 * i : 4 + 3 * i], "big")
+        elif fn == FN_INDIVIDUAL:
             for i in range(0, 16, 4):
                 if p[i]:
                     state[p[i]] = int.from_bytes(p[i + 1 : i + 4], "big")
@@ -191,7 +200,7 @@ class Uploader:
     def upload(self, slot: int, data: bytes, progress=None) -> None:
         if slot not in WRITABLE_SLOTS:
             raise ValueError(f"refusing to write slot {slot}: only slot 1 (brightness + 9) may be changed")
-        if len(data) != FILE_SIZE or data[0] != 0x01 or data[-16:] != TRAILER:
+        if len(data) % 16 or len(data) < HEADER_SIZE + 16 or data[0] != 0x01 or data[-16:] != TRAILER:
             raise ValueError("not an RGB animation file")
         self.dev.add_handler(self._notify)
         try:

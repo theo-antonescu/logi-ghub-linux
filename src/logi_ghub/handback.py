@@ -15,6 +15,7 @@ from .config import data_dir
 from .features import lighting
 from .features import onboard as ob
 from .hidpp import DeviceOffline, HIDPPError
+from .hidpp import features as F
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ def hand_back(dev) -> bool:
             rgb.release()
         elif dev.onboard:
             dev.onboard.set_mode(ob.MODE_ONBOARD)
+        if dev.has(F.PROFILE_MANAGEMENT) and dev.hidpp.call(F.PROFILE_MANAGEMENT, 6, 0, 0, 0)[0] == 0:
+            dev.hidpp.call(F.PROFILE_MANAGEMENT, 6, 0x03)  # still in host mode (left there by G HUB, say)
         return True
     except (HIDPPError, DeviceOffline, TimeoutError, OSError) as e:
         log.info("%s: could not hand back yet (%s)", dev.name, e)

@@ -1,3 +1,5 @@
+import struct
+
 import pytest
 
 from logi_ghub.features import rgb_store as rs
@@ -59,3 +61,20 @@ def test_python_romania_preset_fits():
     logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
     assert len(logo) > 50  # rainbow
     assert all(f[layout.zone_of("Mute")] == f[layout.zone_of("Logo")] for f, _ in info["frames"])
+
+
+def test_parse_reads_g_hub_records_with_its_software_id_and_consecutive_keys():
+    header = bytearray(rs.HEADER_SIZE)
+    header[0], header[7] = 0x01, 0x00
+    header[0x10:0x1D] = b"Main Keyboard"
+    header[0x40:0x4B] = struct.pack(">HHHHHB", 1, 0, 0, 1, 32, 100)
+    consecutive = bytes([0x2A, 10]) + bytes.fromhex("ff0000" "00ff00" "0000ff" "ffffff" "000000")
+    single = bytes([0x6A]) + bytes.fromhex("00b4b4") + bytes([1, 2, 3]).ljust(13, b"\x00")
+    end = bytes([0x7A, 0x00]) + struct.pack(">HH", 0, 3) + bytes(11)
+    body = bytes(header) + consecutive + single + end
+    data = body + b"\xff" * (-len(body) % 16 + 16) + rs.TRAILER
+    info = rs.parse_file(data)
+    frame, duration = info["frames"][0]
+    assert info["name"] == "Main Keyboard" and duration == 3
+    assert frame[10] == 0xFF0000 and frame[12] == 0x0000FF and frame[14] == 0
+    assert frame[1] == frame[3] == 0x00B4B4
