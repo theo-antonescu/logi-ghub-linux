@@ -11,13 +11,33 @@ from gi.repository import Gdk, Graphene, Gsk, Gtk, Pango  # noqa: E402
 from .. import layout
 
 
+def _rgba(r: float, g: float, b: float, a: float = 1.0) -> Gdk.RGBA:
+    c = Gdk.RGBA()
+    c.red, c.green, c.blue, c.alpha = r, g, b, a
+    return c
+
+
+def _from_int(rgb: int, a: float = 1.0) -> Gdk.RGBA:
+    return _rgba(((rgb >> 16) & 0xFF) / 255, ((rgb >> 8) & 0xFF) / 255, (rgb & 0xFF) / 255, a)
+
+
+BODY = _rgba(0.20, 0.22, 0.25)  # the keyboard's aluminium plate
+BODY_EDGE = _rgba(0.36, 0.38, 0.42)
+CAP = _rgba(0.075, 0.08, 0.09)  # black keycaps
+CAP_TOP = _rgba(0.11, 0.115, 0.13)
+CAP_EDGE = _rgba(1, 1, 1, 0.10)
+UNLIT = _rgba(0.36, 0.38, 0.41)  # legend of a key that is off
+
+
 class KeyboardView(Gtk.Widget):
     """Calls ``on_paint(zone)`` when a key is clicked (and while dragging across keys).
 
-    Drawn with GTK snapshots, so it needs no cairo bindings.
+    Drawn like the keyboard looks: black keycaps on a dark plate, with the light
+    showing through each key's legend. Uses GTK snapshots, so it needs no cairo bindings.
     """
 
     GAP = 0.08  # gap between keys, in key units
+    PAD = 0.35  # plate border around the keys, in key units
 
     def __init__(self, available_zones: list[int] | None, on_paint):
         super().__init__()
@@ -25,10 +45,10 @@ class KeyboardView(Gtk.Widget):
         self.caps = layout.keycaps(available_zones)
         self.buttons = {c.zone: c for c in self.caps}  # zones shown
         self.colors: dict[int, int] = {}
-        self.x0, self.y0, self.x1, self.y1 = layout.bounds(self.caps)
+        x0, y0, x1, y1 = layout.bounds(self.caps, decor=True)
+        self.x0, self.y0, self.x1, self.y1 = x0 - self.PAD, y0 - self.PAD, x1 + self.PAD, y1 + self.PAD
         self.set_hexpand(True)
         self._last_painted: int | None = None
-        self._layouts: dict[str, object] = {}
         click = Gtk.GestureClick()
         click.connect("pressed", lambda _g, _n, x, y: self._hit(x, y, new=True))
         self.add_controller(click)
@@ -42,8 +62,8 @@ class KeyboardView(Gtk.Widget):
     def do_measure(self, orientation, for_size):
         aspect = (self.y1 - self.y0) / (self.x1 - self.x0)
         if orientation == Gtk.Orientation.HORIZONTAL:
-            return 360, 620, -1, -1
-        width = for_size if for_size > 0 else 620
+            return 360, 720, -1, -1
+        width = for_size if for_size > 0 else 720
         h = int(width * aspect) + 8
         return h, h, -1, -1
 
@@ -62,7 +82,7 @@ class KeyboardView(Gtk.Widget):
         kx = (x - ox) / unit + self.x0
         ky = (y - oy) / unit + self.y0
         for c in self.caps:
-            if c.x <= kx <= c.x + c.w and c.y <= ky <= c.y + 1:
+            if c.x <= kx <= c.x + c.w and c.y <= ky <= c.y + c.h:
                 return c.zone
         return None
 
@@ -91,47 +111,87 @@ class KeyboardView(Gtk.Widget):
             self.queue_draw()
 
     # drawing
+    @staticmethod
+    def _rounded(x, y, w, h, r) -> Gsk.RoundedRect:
+        rr = Gsk.RoundedRect()
+        rr.init_from_rect(Graphene.Rect().init(x, y, w, h), r)
+        return rr
+
+    def _box(self, snapshot, x, y, w, h, r, fill, edge=None):
+        rr = self._rounded(x, y, w, h, r)
+        snapshot.push_rounded_clip(rr)
+        snapshot.append_color(fill, rr.bounds)
+        snapshot.pop()
+        if edge is not None:
+            snapshot.append_border(rr, [1, 1, 1, 1], [edge] * 4)
+
+    def _legend(self, snapshot, text, font, x, y, w, h, color: Gdk.RGBA, glow: bool):
+        pl = self.create_pango_layout(text)
+        pl.set_font_description(font)
+        tw, th = pl.get_pixel_size()
+        if tw > w - 6:  # a long legend: smaller type, as on the keycaps
+            smaller = font.copy()
+            smaller.set_size(int(font.get_size() * max(0.6, (w - 6) / tw)))
+            pl.set_font_description(smaller)
+            tw, th = pl.get_pixel_size()
+        point = Graphene.Point().init(x + (w - tw) / 2, y + (h - th) / 2)
+        if glow:  # light bleeding around the lit legend
+            snapshot.push_blur(max(2.0, h * 0.12))
+            snapshot.save()
+            snapshot.translate(point)
+            snapshot.append_layout(pl, color)
+            snapshot.restore()
+            snapshot.pop()
+        snapshot.save()
+        snapshot.translate(point)
+        snapshot.append_layout(pl, color)
+        snapshot.restore()
+
     def do_snapshot(self, snapshot):
         width, height = self.get_width(), self.get_height()
         unit, ox, oy = self._scale(width, height)
+        px = lambda kx: ox + (kx - self.x0) * unit  # noqa: E731
+        py = lambda ky: oy + (ky - self.y0) * unit  # noqa: E731
         g = self.GAP * unit
-        radius = 0.12 * unit
-        font = Pango.FontDescription.from_string(f"Sans {max(6, int(unit * 0.22))}")
-        border = Gdk.RGBA(red=1, green=1, blue=1, alpha=0.18)
+        # the plate
+        self._box(snapshot, px(self.x0), py(self.y0), (self.x1 - self.x0) * unit, (self.y1 - self.y0) * unit,
+                  0.3 * unit, BODY, BODY_EDGE)
+        small = Pango.FontDescription.from_string(f"Sans Bold {max(5, int(unit * 0.14))}")
+        for kind, kx, ky, kw, kh in layout.DECOR:
+            x, y, w, h = px(kx), py(ky), kw * unit, kh * unit
+            if kind == "button":
+                self._box(snapshot, x, y, w, h, w / 2, CAP, CAP_EDGE)
+            elif kind == "badge":
+                self._box(snapshot, x, y, w, h, 0.12 * unit, _rgba(0.13, 0.14, 0.16), CAP_EDGE)
+                self._legend(snapshot, "LIGHTSPEED", small, x, y, w, h, UNLIT, False)
+            elif kind == "roller":
+                self._box(snapshot, x, y, w, h, 0.15 * unit, _rgba(0.05, 0.05, 0.06), CAP_EDGE)
+                for i in range(1, 9):  # knurled volume wheel
+                    snapshot.append_color(_rgba(1, 1, 1, 0.07), Graphene.Rect().init(x + w * 0.12, y + h * i / 9, w * 0.76, 1))
+        font = Pango.FontDescription.from_string(f"Sans {max(6, int(unit * 0.24))}")
+        logo_font = Pango.FontDescription.from_string(f"Sans Bold {max(8, int(unit * 0.62))}")
         for c in self.caps:
-            x = ox + (c.x - self.x0) * unit + g / 2
-            y = oy + (c.y - self.y0) * unit + g / 2
-            w = c.w * unit - g
-            h = unit - g
             rgb = self.colors.get(c.zone)
-            fill = Gdk.RGBA()
-            if rgb is None:
-                fill.red, fill.green, fill.blue, fill.alpha = 0.22, 0.22, 0.24, 1
+            lit = rgb is not None and rgb != 0
+            legend = _from_int(rgb) if lit else UNLIT
+            x, y = px(c.x) + g / 2, py(c.y) + g / 2
+            w, h = c.w * unit - g, c.h * unit - g
+            if c.name == "Logo":
+                self._legend(snapshot, "G", logo_font, x, y, w, h, legend, lit)
+                continue
+            if c.round:
+                self._box(snapshot, x, y, w, h, w / 2, CAP, CAP_EDGE)
             else:
-                fill.red, fill.green, fill.blue, fill.alpha = ((rgb >> 16) & 0xFF) / 255, ((rgb >> 8) & 0xFF) / 255, (rgb & 0xFF) / 255, 1
-            rect = Graphene.Rect().init(x, y, w, h)
-            rounded = Gsk.RoundedRect()
-            rounded.init_from_rect(rect, radius)
-            snapshot.push_rounded_clip(rounded)
-            snapshot.append_color(fill, rect)
-            snapshot.pop()
-            snapshot.append_border(rounded, [1, 1, 1, 1], [border] * 4)
-            label = c.label
-            if label:
-                lum = 0.0 if rgb is None else (0.299 * ((rgb >> 16) & 0xFF) + 0.587 * ((rgb >> 8) & 0xFF) + 0.114 * (rgb & 0xFF))
-                text = Gdk.RGBA()
-                text.red = text.green = text.blue = 0.05 if lum > 140 else 0.92
-                text.alpha = 1
-                pl = self.create_pango_layout(label)
-                pl.set_font_description(font)
-                tw, th = pl.get_pixel_size()
-                if tw > w - 4:
-                    pl.set_text(label[:3], -1)
-                    tw, th = pl.get_pixel_size()
-                snapshot.save()
-                snapshot.translate(Graphene.Point().init(x + (w - tw) / 2, y + (h - th) / 2))
-                snapshot.append_layout(pl, text)
-                snapshot.restore()
+                self._box(snapshot, x, y, w, h, 0.12 * unit, CAP, CAP_EDGE)
+                inset = 0.07 * unit  # the keycap's top face
+                self._box(snapshot, x + inset, y + inset * 0.6, w - 2 * inset, h - 2.2 * inset, 0.1 * unit, CAP_TOP)
+            if lit:  # a faint underglow from the LED below the key
+                glow = self._rounded(x + w * 0.2, y + h * 0.82, w * 0.6, h * 0.1, h * 0.05)
+                snapshot.push_rounded_clip(glow)
+                snapshot.append_color(_from_int(rgb, 0.35), glow.bounds)
+                snapshot.pop()
+            if c.label:
+                self._legend(snapshot, c.label, font, x, y - (0 if c.round else 0.03 * unit), w, h, legend, lit)
 
 
 def rgba_to_int(rgba: Gdk.RGBA) -> int:

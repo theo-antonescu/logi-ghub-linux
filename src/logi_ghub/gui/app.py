@@ -824,7 +824,16 @@ class DevicePane(Gtk.Box):
                 use.connect("clicked", lambda _b, n=sp.number: self._use_stored(n))
                 row.add_suffix(use)
             preview = light.to_lighting()
-            if preview is not None:
+            if light.effect_id == 0x0C:  # a custom animation: playable if this computer has a copy
+                from ..features import rgb_store
+
+                local = rgb_store.load_local(self.dev.key, light.params[0])
+                if local is not None and local["frames"] and light.params[0] < len(self.onboard_effects) \
+                        and local["name"] == self.onboard_effects[light.params[0]]:
+                    b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Play it in the picture below")
+                    b.connect("clicked", lambda _b, info=local: self._preview_frames(info["frames"], info["period_ms"]))
+                    row.add_suffix(b)
+            elif preview is not None:
                 b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Show this in the picture below (approximate)")
                 b.connect("clicked", lambda _b, pv=preview: self._preview_stored(pv))
                 row.add_suffix(b)

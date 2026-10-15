@@ -22,8 +22,21 @@ TKL_ANSI: list[list[tuple[str | None, float]]] = [
      ("Slash", 1), ("RightShift", 2.75), (None, 1.25), ("Up", 1)],
     [("LeftCtrl", 1.25), ("LeftMeta", 1.25), ("LeftAlt", 1.25), ("Space", 6.25), ("RightAlt", 1.25), ("RightMeta", 1.25),
      ("Menu", 1.25), ("RightCtrl", 1.25), (None, 0.25), ("Left", 1), ("Down", 1), ("Right", 1)],
-    # extras above the main block on the G915 X TKL, drawn as a separate row
-    [("Logo", 1.5), (None, 0.5), ("Brightness", 1), ("Mute", 1), ("Previous", 1), ("Play/Pause", 1), ("Next", 1)],
+]
+
+# The strip above the keys on the G915 X TKL: (name, x, width). Lit ones have a zone; the rest are drawn only.
+TOP_Y = -1.45
+TOP_ROW: list[tuple[str, float, float]] = [
+    ("Logo", 0.1, 0.8),
+    ("Brightness", 5.1, 0.8),
+    ("Previous", 12.6, 0.8), ("Play/Pause", 13.6, 0.8), ("Next", 14.6, 0.8), ("Mute", 15.6, 0.8),
+]
+ROUND = {"Brightness", "Previous", "Play/Pause", "Next", "Mute"}
+# Unlit parts of that strip, for the picture: (kind, x, y, width, height)
+DECOR: list[tuple[str, float, float, float, float]] = [
+    ("button", 2.1, TOP_Y, 0.8, 0.8), ("button", 3.1, TOP_Y, 0.8, 0.8), ("button", 4.1, TOP_Y, 0.8, 0.8),
+    ("badge", 7.65, TOP_Y - 0.05, 2.2, 0.9),
+    ("roller", 16.75, TOP_Y - 0.2, 1.45, 1.05),
 ]
 
 LABELS = {
@@ -33,11 +46,8 @@ LABELS = {
     "RightAlt": "AltGr", "LeftMeta": "Super", "RightMeta": "Super", "Menu": "☰", "CapsLock": "Caps",
     "PrintScreen": "PrtSc", "ScrollLock": "ScrLk", "PageUp": "PgUp", "PageDown": "PgDn", "Delete": "Del",
     "Insert": "Ins", "Up": "↑", "Down": "↓", "Left": "←", "Right": "→", "Space": "", "Brightness": "☀",
-    "Previous": "⏮", "Next": "⏭", "Mute": "🔇", "Play/Pause": "⏯", "Pause": "Pause",
+    "Previous": "⏮", "Next": "⏭", "Mute": "×", "Play/Pause": "⏯", "Pause": "Pause", "Logo": "G",
 }
-
-MEDIA_ROW = len(TKL_ANSI) - 1
-
 
 @dataclass(frozen=True)
 class KeyCap:
@@ -46,6 +56,11 @@ class KeyCap:
     x: float  # left edge, key units
     y: float  # top edge, rows
     w: float
+    h: float = 1.0
+
+    @property
+    def round(self) -> bool:
+        return self.name in ROUND
 
     @property
     def label(self) -> str:
@@ -65,19 +80,28 @@ def zone_of(name: str) -> int | None:
 
 
 def keycaps(available_zones: list[int] | None = None) -> list[KeyCap]:
-    """Key positions; the media row is drawn above the function row like on the keyboard."""
+    """Key positions, with the logo and media buttons in the strip above the function row like on the keyboard."""
     caps = []
+
+    def add(name, x, y, w, h=1.0):
+        zone = zone_of(name)
+        if zone is not None and (available_zones is None or zone in available_zones):
+            caps.append(KeyCap(name, zone, x, y, w, h))
+
+    for name, x, w in TOP_ROW:
+        add(name, x, TOP_Y, w, w)
     for r, row in enumerate(TKL_ANSI):
-        y = -1.25 if r == MEDIA_ROW else r + (0.25 if r else 0)  # small gap under the F-row
-        x = 0.0 if r != MEDIA_ROW else 11.5
+        y = r + (0.25 if r else 0)  # small gap under the F-row
+        x = 0.0
         for name, width in row:
             if name is not None:
-                zone = zone_of(name)
-                if zone is not None and (available_zones is None or zone in available_zones):
-                    caps.append(KeyCap(name, zone, x, y, width))
+                add(name, x, y, width)
             x += width
     return caps
 
 
-def bounds(caps: list[KeyCap]) -> tuple[float, float, float, float]:
-    return (min(c.x for c in caps), min(c.y for c in caps), max(c.x + c.w for c in caps), max(c.y + 1 for c in caps))
+def bounds(caps: list[KeyCap], decor: bool = False) -> tuple[float, float, float, float]:
+    boxes = [(c.x, c.y, c.x + c.w, c.y + c.h) for c in caps]
+    if decor:
+        boxes += [(x, y, x + w, y + h) for _k, x, y, w, h in DECOR]
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
