@@ -31,3 +31,17 @@ def test_loop_covers_every_layer():
     d = design.Design("t", [design.Layer("a", ["A"], "breathing", [0xFF0000], period_ms=1500),
                             design.Layer("b", ["B"], "rainbow", period_ms=2000)])
     assert d.loop_ms() == 6000
+
+
+def test_older_lighting_converts_to_a_design_that_looks_the_same():
+    from logi_ghub import lightfx
+
+    a, b = layout.zone_of("A"), layout.zone_of("B")
+    light = {"keys": {str(a): 0xFF0000}, "animation": {"enabled": True, "colors": [0x00FF00, 0x0000FF], "step_ms": 500,
+                                                        "fade": True, "pattern": "wave_right", "keep_painted": True}}
+    d = design.from_lighting(light)
+    new, old = d.renderer(ZONES), lightfx.Renderer(light, ZONES)
+    for t in (0.0, 0.3, 0.77):
+        fn, fo = new.frame(t), old.frame(t)
+        assert fn[a] == 0xFF0000
+        assert abs((fn[b] >> 8 & 255) - (fo[b] >> 8 & 255)) <= 40  # same wave, positions measured slightly differently

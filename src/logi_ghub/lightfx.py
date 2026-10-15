@@ -194,18 +194,18 @@ def _quantize(colors: dict[int, int], bits: int = 4) -> dict[int, int]:
 class Animator(threading.Thread):
     """Plays a colour sequence on the keyboard by sending per-key frames."""
 
-    def __init__(self, dev, renderer: Renderer, on_error=None):
+    def __init__(self, dev, renderer, on_error=None, fps: float | None = None, quant_bits: int | None = None):
         super().__init__(name="lighting-animator", daemon=True)
         self.dev = dev
-        self.renderer = renderer
+        self.renderer = renderer  # anything with frame(t) -> {zone: colour}
         self.stop_event = threading.Event()
         self.paused = threading.Event()
         self.on_error = on_error
-        anim = renderer.animation or {}
+        anim = getattr(renderer, "animation", None) or {}
         wave = anim.get("pattern", "all") != "all"
-        self.fps = 8 if wave else 15
+        self.fps = fps or (8 if wave else 15)
         # Rounding only matters while colours fade; stepped sequences keep the exact colours chosen.
-        self.quant_bits = 8 if not anim.get("fade", True) else (4 if wave else 6)
+        self.quant_bits = quant_bits or (8 if not anim.get("fade", True) else (4 if wave else 6))
         self.last: dict[int, int] = {}
 
     def run(self) -> None:
@@ -248,6 +248,20 @@ def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
         rgb.claim()
     if dev.brightness and light.get("brightness") is not None:
         dev.brightness.set(int(light["brightness"]))
+    if light.get("design") and pk:
+        from .design import Design
+
+        d = Design.from_dict(light["design"])
+        r = d.renderer(pk.zones)
+        rgb.hold_static()
+        record_applied(dev, light)
+        if not d.animated:
+            pk.set_colors(r.frame(0.0))
+            return None
+        # same frames as the stored animation (48 ms apart), sent exactly
+        anim = Animator(dev, r, fps=1000 / 48, quant_bits=8)
+        anim.start()
+        return anim
     renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones))
     if renderer.animation and pk:
         rgb.hold_static()  # per-key frames show only while the firmware effect is Static

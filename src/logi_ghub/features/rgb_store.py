@@ -254,8 +254,12 @@ def load_local(model_key: str, slot: int) -> dict | None:
 def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
     """Turn the app's lighting into an animation and save it in ``slot``. Returns the parsed result."""
     zones = dev.per_key.zones
-    frames = frames_from_lighting(light, zones)
-    data = build_file(name, frames)
+    if light.get("design"):
+        from ..design import Design, fit_frames
+
+        _frames, _period, data = fit_frames(Design.from_dict({**light["design"], "name": name}), zones)
+    else:
+        data = build_file(name, frames_from_lighting(light, zones))
     Uploader(dev.hidpp).upload(slot, data, progress)
     save_local(dev.key, slot, data)
     return parse_file(data)

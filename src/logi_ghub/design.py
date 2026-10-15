@@ -219,3 +219,28 @@ def fit_frames(design: Design, zones: list[int], periods=(48, 64, 80, 96, 128, 1
             last = e
     raise ValueError(f"“{design.name}” has too much movement to store on the keyboard ({last}); "
                      "use fewer animated keys or slower effects")
+
+
+def from_lighting(light: dict, name: str = "My design") -> Design:
+    """Turn an older lighting setup (painted keys, one colour sequence) into a design."""
+    names = {layout.zone_of(c.name): c.name for c in layout.keycaps()}
+    painted: dict[int, list[str]] = {}
+    for z, c in (light.get("keys") or {}).items():
+        if int(z) in names:
+            painted.setdefault(int(c), []).append(names[int(z)])
+    layers = []
+    anim = light.get("animation") or {}
+    if anim.get("enabled") and anim.get("colors"):
+        keep = anim.get("keep_painted", True)
+        taken = {k for ks in painted.values() for k in ks} if keep else set()
+        direction = {"wave_right": "right", "wave_left": "left", "wave_down": "down", "wave_up": "up",
+                     "center_out": "out"}.get(anim.get("pattern", "all"), "none")
+        colors = [int(c) for c in anim["colors"]]
+        layers.append(Layer("Colour sequence", [k for k in names.values() if k not in taken], "sequence", colors,
+                            period_ms=max(50, int(anim.get("step_ms", 1000))) * len(colors), direction=direction,
+                            fade=bool(anim.get("fade", True)), spread=1.0))
+        if not keep:
+            painted = {}
+    for color, keys in painted.items():
+        layers.append(Layer(f"Painted #{color:06x}", sorted(keys), "static", [color]))
+    return Design(name, layers)

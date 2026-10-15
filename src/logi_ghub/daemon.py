@@ -174,7 +174,8 @@ class Session:
         if self.animator:
             self.animator.stop()
             self.animator = None
-        if self.dev.rgb and (light.get("zones") or light.get("keys") or (light.get("animation") or {}).get("enabled")):
+        if self.dev.rgb and (light.get("design") or light.get("zones") or light.get("keys")
+                            or (light.get("animation") or {}).get("enabled")):
             self.animator = lightfx.apply(self.dev, light, claim=not self.lighting_claimed)
             self.lighting_claimed = True
         elif self.dev.brightness and light.get("brightness") is not None:
