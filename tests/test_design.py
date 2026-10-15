@@ -7,14 +7,17 @@ ZONES = list(range(1, 112)) + [153, 155, 156, 157, 158, 210]
 def test_python_romania_design_fits_with_a_seamless_loop():
     d = presets.python_romania_design()
     frames, period, data = design.fit_frames(d, ZONES)
-    assert sum(n for _, n in frames) * period == d.loop_ms() == 7200  # no jump where the loop restarts
+    assert sum(n for _, n in frames) * period == d.loop_ms()  # no jump where the loop restarts
     info = rgb_store.parse_file(data)
     assert info["name"] == "Python + Romania" and info["period_ms"] == period
     a = layout.zone_of("A")
     assert all(f[a] == presets.PY_STRING for f, _ in frames)  # letters never move
     ins, pgup = layout.zone_of("Insert"), layout.zone_of("PageUp")
-    assert len({f[ins] for f, _ in frames}) > 10  # the flag ripples
-    assert max(f[ins] for f, _ in frames) == presets.RO_BLUE and max(f[pgup] for f, _ in frames) & 0xFF0000 == 0xFF0000
+    seen_ins = {f[ins] for f, _ in frames}
+    assert len(seen_ins) > 10  # the flag rises, waves and fades
+    assert frames[0][0][ins] & 0xFF > 0x80 and frames[0][0][ins] >> 16 > 0x40  # starts as pale sky, not dark
+    assert any(c & 0xFF > 0xC0 and c >> 8 & 0xFF < 0x40 for c in seen_ins)  # then flag blue
+    assert any(f[pgup] >> 16 > 0xC0 and f[pgup] & 0xFF < 0x40 for f, _ in frames)  # and red on the right
 
 
 def test_layers_stack_and_round_trip():

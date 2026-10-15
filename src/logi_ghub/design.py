@@ -85,18 +85,20 @@ class Layer:
     fade: bool = True  # sequence: blend between colours
     floor: float = 0.3  # ripple/breathing: dimmest level, 0-1
     spread: float = 0.5  # sequence/ripple/rainbow: how far apart in the cycle the first and last keys are
+    background: int | None = None  # raise/sparkle: what keys show where the effect isn't lit (None = dark)
 
     def to_dict(self) -> dict:
         return {"name": self.name, "keys": list(self.keys), "effect": self.effect, "colors": [int(c) for c in self.colors],
                 "period_ms": self.period_ms, "direction": self.direction, "fade": self.fade, "floor": self.floor,
-                "spread": self.spread}
+                "spread": self.spread, "background": self.background}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Layer":
         return cls(name=d.get("name", "Layer"), keys=list(d.get("keys", [])), effect=d.get("effect", "static"),
                    colors=[int(c) for c in d.get("colors", [0xFFFFFF])] or [0xFFFFFF],
                    period_ms=int(d.get("period_ms", 2000)), direction=d.get("direction", "none"),
-                   fade=bool(d.get("fade", True)), floor=float(d.get("floor", 0.3)), spread=float(d.get("spread", 0.5)))
+                   fade=bool(d.get("fade", True)), floor=float(d.get("floor", 0.3)), spread=float(d.get("spread", 0.5)),
+                   background=None if d.get("background") is None else int(d["background"]))
 
     @property
     def animated(self) -> bool:
@@ -187,7 +189,7 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
         slots = 10  # moments per loop
         slot = int(phase * slots)
         local = phase * slots - slot
-        dim = scale(base, layer.floor)
+        dim = scale(base, layer.floor) if layer.background is None else layer.background
         if _noise(zone, slot) < max(0.05, layer.spread):
             flash = colors[int(_noise(zone + 997, slot) * k) % k]
             return lerp(dim, flash, (1 - local) ** 2)
@@ -198,14 +200,16 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
         return scale(base, layer.floor + (1 - layer.floor) * level)
     if layer.effect == "raise":
         height = 1 - fy  # 0 at the bottom row
+        # the sky behind the flag: the background colour, paler towards the top
+        sky = 0 if layer.background is None else lerp(layer.background, 0xFFFFFF, (1 - fy) * 0.55)
         if phase < 0.45:  # rising
             shown = height <= phase / 0.45 * 1.05
-            return base if shown else 0
+            return base if shown else sky
         wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
-        level = layer.floor + (1 - layer.floor) * wave
-        if phase > 0.85:  # fading
-            level *= (1 - phase) / 0.15
-        return scale(base, level)
+        flag = scale(base, layer.floor + (1 - layer.floor) * wave)
+        if phase > 0.85:  # fading back into the sky
+            return lerp(flag, sky, (phase - 0.85) / 0.15)
+        return flag
     return base
 
 

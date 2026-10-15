@@ -215,6 +215,15 @@ class DesignLighting:
         row.add_row(floor)
         fade = Adw.SwitchRow(title="Fade between colours", active=layer.fade)
         row.add_row(fade)
+        bg_row = Adw.ActionRow(title="Background", subtitle="What the keys show where the effect isn't lit")
+        bg_dark = Gtk.ToggleButton(label="Dark", valign=Gtk.Align.CENTER, active=layer.background is None)
+        bg_btn = _colour_button(layer.background if layer.background is not None else 0x50B0FF, "Background colour",
+                                lambda v: (setattr(layer, "background", v), bg_dark.set_active(False), changed()))
+        bg_dark.connect("toggled", lambda b: (setattr(layer, "background", None if b.get_active() else rgba_to_int(bg_btn.get_rgba())),
+                                              changed()))
+        bg_row.add_suffix(bg_btn)
+        bg_row.add_suffix(bg_dark)
+        row.add_row(bg_row)
 
         def rebuild_colors():
             while (child := colors_box.get_first_child()) is not None:
@@ -235,6 +244,7 @@ class DesignLighting:
             e = layer.effect
             colors_row.set_visible(e != "rainbow")
             speed.set_visible(e != "static")
+            bg_row.set_visible(e in ("raise", "sparkle"))
             spread.set_visible(e in ("comet", "sparkle") or (e in ("sequence", "ripple", "rainbow") and layer.direction != "none"))
             spread.set_title({"comet": "Tail length", "sparkle": "How many keys sparkle"}.get(e, "Wave length"))
             spread.set_subtitle({"comet": "Part of the circle the tail covers", "sparkle": "Share of the keys flashing at a time"}

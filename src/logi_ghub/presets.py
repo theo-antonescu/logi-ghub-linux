@@ -18,6 +18,7 @@ PY_MAGENTA = 0xFF20C0  # media keys and brightness
 
 # Romanian flag, tuned for LEDs (the printed blue is too dark to show)
 RO_BLUE, RO_YELLOW, RO_RED = 0x0030FF, 0xFFC800, 0xFF0010
+SKY = 0x50B0FF  # light blue behind the flag (paler towards the top)
 
 # The flag covers the whole block right of the main keys, in three columns (blue, yellow, red)
 NAV_COLUMNS = [["PrintScreen", "Insert", "Delete", "Left"], ["ScrollLock", "Home", "End", "Up", "Down"],
@@ -39,14 +40,14 @@ def _python_groups() -> list[tuple[str, list[str], int]]:
 
 
 def python_romania_design() -> Design:
-    """Python-theme keys, a waving Romanian flag on the block right of the main keys (PrtSc to the arrows), and a rainbow on the
-    logo and the media and brightness keys. The flag's stripes stay in order (blue, yellow, red from
-    left to right) while a ripple of brightness runs across them like wind through cloth."""
+    """Python-theme keys; on the block right of the main keys (PrtSc to the arrows) the Romanian flag
+    rises row by row out of a light blue sky, waves, and fades back; and the flag colours fall in
+    bands from left to right across the logo, brightness and music keys."""
     layers = [Layer(name, keys, "static", [colour]) for name, keys, colour in _python_groups()]
-    layers.append(Layer("Romanian flag", [k for col in NAV_COLUMNS for k in col], "ripple", [RO_BLUE, RO_YELLOW, RO_RED],
-                        period_ms=2400, direction="right", floor=0.45, spread=0.44))
-    layers.append(Layer("Rainbow", ["Logo", "Brightness", "Mute", "Previous", "Play/Pause", "Next"], "rainbow",
-                        [0xFF0000], period_ms=7200, direction="none", spread=0.0))
+    layers.append(Layer("Romanian flag", [k for col in NAV_COLUMNS for k in col], "raise", [RO_BLUE, RO_YELLOW, RO_RED],
+                        period_ms=6000, direction="right", floor=0.45, background=SKY))
+    layers.append(Layer("Logo and music keys", ["Logo", "Brightness", "Previous", "Play/Pause", "Next", "Mute"], "sequence",
+                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=2400, direction="right", fade=False, spread=0.6))
     return Design("Python + Romania", layers)
 
 
