@@ -47,7 +47,7 @@ def python_romania_design() -> Design:
     layers.append(Layer("Romanian flag", [k for col in NAV_COLUMNS for k in col], "raise", [RO_BLUE, RO_YELLOW, RO_RED],
                         period_ms=6000, direction="right", floor=0.45, background=SKY))
     layers.append(Layer("Logo and music keys", ["Logo", "Brightness", "Previous", "Play/Pause", "Next", "Mute"], "sequence",
-                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=2400, direction="right", fade=False, spread=0.6))
+                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=3000, direction="right", fade=True, spread=0.6))
     return Design("Python + Romania", layers)
 
 

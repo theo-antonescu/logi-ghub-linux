@@ -202,11 +202,12 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
         height = 1 - fy  # 0 at the bottom row
         # the sky behind the flag: the background colour, paler towards the top
         sky = 0 if layer.background is None else lerp(layer.background, 0xFFFFFF, (1 - fy) * 0.55)
-        if phase < 0.45:  # rising
-            shown = height <= phase / 0.45 * 1.05
-            return base if shown else sky
         wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
         flag = scale(base, layer.floor + (1 - layer.floor) * wave)
+        if phase < 0.45:  # rising: each row fades in as the top edge of the flag passes it
+            soft = 0.3
+            edge = phase / 0.45 * (1 + soft)
+            return lerp(sky, flag, min(1.0, max(0.0, (edge - height) / soft)))
         if phase > 0.85:  # fading back into the sky
             return lerp(flag, sky, (phase - 0.85) / 0.15)
         return flag
