@@ -896,9 +896,15 @@ class DevicePane(Gtk.Box, DesignLighting):
     def release_lighting(self, note: str = ""):
         self.stop_lighting()
 
+        fallback = getattr(self, "stored_active", None)
+
         def work():
             if self.dev.rgb:
                 self.dev.rgb.release()
+            if fallback and self.dev.has(F.PROFILE_MANAGEMENT):  # as G HUB does: re-select the fallback profile
+                from ..features.profile_fs import ProfileFS
+
+                ProfileFS(self.dev.hidpp).select(fallback)
             lightfx.clear_applied(self.dev.key)
             self._claimed = False
 

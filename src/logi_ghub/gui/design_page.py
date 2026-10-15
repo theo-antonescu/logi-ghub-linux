@@ -488,10 +488,11 @@ class DesignLighting:
     # -- what the keyboard has stored ------------------------------------------------------------------------
     def _on_keyboard_group(self):
         from ..features import rgb_store
-        from ..features.profile_fs import ProfileFS
 
         if not (self.stored_profiles or self.onboard_effects):
             return
+        if self.stored_profiles:
+            self._fallback_group()
         g = self.add_group("lighting", Adw.PreferencesGroup(
             title="Stored on the keyboard",
             description="What the keyboard plays by itself. Fn + F2/F3/F4 switch its profiles; brightness + 8 and + 9 "
@@ -536,10 +537,38 @@ class DesignLighting:
                 b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Approximate")
                 b.connect("clicked", lambda _b, n=sp.number, v=pv: self._show_onboard_profile(n, v))
                 row.add_suffix(b)
-            if sp.number != self.stored_active:
-                use = Gtk.Button(label="Use", valign=Gtk.Align.CENTER, tooltip_text=f"Same as Fn + F{sp.number + 1}")
-                use.connect("clicked", lambda _b, n=sp.number: self.run_async(
-                    lambda: ProfileFS(self.dev.hidpp).select(n), lambda _r: (self.toast(f"The keyboard is on profile {n}"), self.load())))
-                row.add_suffix(use)
             g.add(row)
+
+    def _profile_label(self, sp) -> str:
+        light = sp.lighting
+        slot = light.params[0] if light.effect_id == 0x0C else None
+        if slot is not None and slot < len(self.onboard_effects):
+            what = f"“{self.onboard_effects[slot]}” animation"
+        else:
+            what = light.describe()
+        return f"Profile {sp.number}: {what}"
+
+    def _fallback_group(self):
+        """Which on-board profile the keyboard falls back to (the active one)."""
+        from ..features.profile_fs import ProfileFS
+
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Fallback lighting",
+            description="What the keyboard shows when nothing else is chosen: after this app or G HUB lets go, after a "
+                        "restart, or until you press brightness + 8 or + 9. Same as Fn + F2/F3/F4."))
+        numbers = [sp.number for sp in self.stored_profiles]
+        combo = Adw.ComboRow(title="Fall back to", model=Gtk.StringList.new([self._profile_label(sp) for sp in self.stored_profiles]))
+        if self.stored_active in numbers:
+            combo.set_selected(numbers.index(self.stored_active))
+
+        def picked(*_):
+            n = numbers[combo.get_selected()]
+            if n == self.stored_active:
+                return
+            self.stored_active = n
+            self.run_async(lambda: ProfileFS(self.dev.hidpp).select(n),
+                           lambda _r: self.toast(f"The keyboard now falls back to profile {n}"))
+
+        combo.connect("notify::selected", picked)
+        g.add(combo)
 
