@@ -221,7 +221,7 @@ class DesignLighting:
                 colors_box.remove(child)
             for k, c in enumerate(layer.colors):
                 colors_box.append(_colour_button(c, f"Colour {k + 1}", lambda v, k=k: (layer.colors.__setitem__(k, v), changed())))
-            if layer.effect in ("sequence", "ripple"):
+            if layer.effect not in ("static", "breathing", "rainbow"):
                 if len(layer.colors) > 1:
                     rm = Gtk.Button(icon_name="list-remove-symbolic", tooltip_text="Remove the last colour", css_classes=["flat"])
                     rm.connect("clicked", lambda *_: (layer.colors.pop(), rebuild_colors(), changed()))
@@ -234,10 +234,13 @@ class DesignLighting:
         def sync():
             e = layer.effect
             colors_row.set_visible(e != "rainbow")
-            for w in (speed, direction):
-                w.set_visible(e != "static")
-            spread.set_visible(e in ("sequence", "ripple", "rainbow") and layer.direction != "none")
-            floor.set_visible(e in ("ripple", "breathing"))
+            speed.set_visible(e != "static")
+            spread.set_visible(e in ("comet", "sparkle") or (e in ("sequence", "ripple", "rainbow") and layer.direction != "none"))
+            spread.set_title({"comet": "Tail length", "sparkle": "How many keys sparkle"}.get(e, "Wave length"))
+            spread.set_subtitle({"comet": "Part of the circle the tail covers", "sparkle": "Share of the keys flashing at a time"}
+                                .get(e, "How far apart in the cycle the first and last keys are"))
+            floor.set_visible(e in ("ripple", "breathing", "comet", "sparkle", "heartbeat", "raise"))
+            direction.set_visible(e not in ("static", "pinwheel", "comet", "turning"))
             fade.set_visible(e == "sequence")
             if e in ("static", "breathing") and len(layer.colors) > 1:
                 del layer.colors[1:]

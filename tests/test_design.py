@@ -45,3 +45,17 @@ def test_older_lighting_converts_to_a_design_that_looks_the_same():
         fn, fo = new.frame(t), old.frame(t)
         assert fn[a] == 0xFF0000
         assert abs((fn[b] >> 8 & 255) - (fo[b] >> 8 & 255)) <= 40  # same wave, positions measured slightly differently
+
+
+def test_flag_effects_use_the_flag_colours_and_loop():
+    keys = [k for col in presets.NAV_COLUMNS for k in col]
+    flag = [presets.RO_BLUE, presets.RO_YELLOW, presets.RO_RED]
+    for effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):
+        layer = design.Layer("f", keys, effect, flag, period_ms=3000, direction="right", floor=0.4, spread=0.4)
+        r = design.Design("t", [layer]).renderer(ZONES)
+        zones = [layout.zone_of(k) for k in keys]
+        seen = {r.frame(t / 10)[z] for t in range(30) for z in zones}
+        assert len(seen) > 2, effect  # it moves
+        assert all(r.frame(0.7)[z] == r.frame(3.7)[z] for z in zones), effect  # same every loop
+    pin = design.Design("t", [design.Layer("f", keys, "pinwheel", flag, 3000)]).renderer(ZONES)
+    assert set(pin.frame(0.4).values()) - {0} <= set(flag)

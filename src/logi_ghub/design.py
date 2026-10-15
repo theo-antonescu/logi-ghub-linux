@@ -14,6 +14,12 @@ Effects (``Layer.effect``):
   while a ripple of brightness runs over them, like wind through a flag.
 * ``rainbow``: all hues, moving across the keys in the layer's direction.
 * ``breathing``: the first colour fades in and out.
+* ``pinwheel``: the colours as sectors turning around the keys' centre.
+* ``comet``: a bright head runs round the keys' centre, its tail cooling through the colours.
+* ``turning``: the stripes rotate, from vertical through horizontal and back.
+* ``sparkle``: dim stripes with keys flashing in the colours at random (the same every loop).
+* ``heartbeat``: the stripes beat twice, then rest.
+* ``raise``: the stripes rise row by row from the bottom, wave, then fade.
 """
 
 from __future__ import annotations
@@ -30,7 +36,14 @@ EFFECTS = {
     "ripple": "Ripple (stripes that wave)",
     "rainbow": "Rainbow",
     "breathing": "Breathing",
+    "pinwheel": "Pinwheel (turning sectors)",
+    "comet": "Comet (runs in a circle)",
+    "turning": "Turning stripes",
+    "sparkle": "Sparkles",
+    "heartbeat": "Heartbeat",
+    "raise": "Raise the flag",
 }
+STRIPED = {"ripple", "sparkle", "heartbeat", "raise"}  # effects that lay the colours out as stripes
 DIRECTIONS = {
     "none": "Everywhere at once",
     "right": "Left to right",
@@ -140,6 +153,62 @@ def _along(direction: str, fx: float, fy: float) -> float:
             "out": min(1.0, math.hypot(fx - 0.5, (fy - 0.5) * 0.4) * 2)}.get(direction, 0.0)
 
 
+def _stripe(layer: "Layer", colors: list[int], fx: float, fy: float) -> int:
+    d = _along(layer.direction if layer.direction != "none" else "right", fx, fy)
+    return colors[min(len(colors) - 1, int(d * len(colors)))]
+
+
+def _noise(zone: int, slot: int) -> float:
+    """A repeatable pseudo-random number 0-1 for a key and a moment."""
+    h = (zone * 73856093) ^ (slot * 19349663) ^ 0x5BD1E995
+    h = (h * 2654435761) & 0xFFFFFFFF
+    return (h >> 8) / float(1 << 24)
+
+
+def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: float, cycle: float) -> int:
+    k = len(colors)
+    phase = cycle % 1.0
+    angle = (math.atan2(fy - 0.5, fx - 0.5) / (2 * math.pi)) % 1.0
+    if layer.effect == "pinwheel":
+        return colors[int(((angle - phase) % 1.0) * k) % k]
+    if layer.effect == "comet":
+        behind = (phase - angle) % 1.0  # 0 at the head
+        length = max(0.05, layer.spread)
+        if behind >= length:
+            return scale(colors[-1], layer.floor * 0.5)
+        part = behind / length
+        return scale(colors[min(k - 1, int(part * k))], layer.floor + (1 - layer.floor) * (1 - part))
+    if layer.effect == "turning":
+        th = 2 * math.pi * phase
+        u = ((fx - 0.5) * math.cos(th) + (fy - 0.5) * math.sin(th)) / math.sqrt(0.5)  # -1..1
+        return colors[min(k - 1, int((u + 1) / 2 * k))]
+    base = _stripe(layer, colors, fx, fy)
+    if layer.effect == "sparkle":
+        slots = 10  # moments per loop
+        slot = int(phase * slots)
+        local = phase * slots - slot
+        dim = scale(base, layer.floor)
+        if _noise(zone, slot) < max(0.05, layer.spread):
+            flash = colors[int(_noise(zone + 997, slot) * k) % k]
+            return lerp(dim, flash, (1 - local) ** 2)
+        return dim
+    if layer.effect == "heartbeat":
+        beat = lambda t0: math.exp(-max(0.0, phase - t0) * 18) if phase >= t0 else 0.0  # noqa: E731
+        level = max(beat(0.0), 0.8 * beat(0.22))
+        return scale(base, layer.floor + (1 - layer.floor) * level)
+    if layer.effect == "raise":
+        height = 1 - fy  # 0 at the bottom row
+        if phase < 0.45:  # rising
+            shown = height <= phase / 0.45 * 1.05
+            return base if shown else 0
+        wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
+        level = layer.floor + (1 - layer.floor) * wave
+        if phase > 0.85:  # fading
+            level *= (1 - phase) / 0.15
+        return scale(base, level)
+    return base
+
+
 class DesignRenderer:
     """Colours of every key of a design at a point in time."""
 
@@ -181,6 +250,8 @@ class DesignRenderer:
                 elif layer.effect == "breathing":
                     level = 0.5 - 0.5 * math.cos(2 * math.pi * cycle)
                     c = scale(colors[0], layer.floor + (1 - layer.floor) * level)
+                elif layer.effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):
+                    c = _shape_effect(layer, colors, zone, fx, fy, cycle)
                 else:
                     c = colors[0]
                 out[zone] = c
