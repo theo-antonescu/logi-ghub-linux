@@ -144,10 +144,10 @@ class ProfileFS:
     def active(self) -> tuple[bool, int]:
         """(in on-board mode, number of the profile in use), from the state query G HUB sends (fn 6, zeros).
 
-        The reply's first byte is 1 in on-board mode and 0 while the host owns the keyboard.
+        The reply's first byte has bit 0 set in on-board mode and is 0 while the host owns the keyboard.
         """
         d = self.dev.call(F.PROFILE_MANAGEMENT, 6, 0, 0, 0)
-        return d[0] == 1, d[2]
+        return bool(d[0] & 1), d[2]  # bit 1 is set too at times (seen after animation uploads)
 
     def select(self, number: int) -> None:
         """Make on-board profile ``number`` the one in use, as G HUB does (fn 9 naming the profile and its CRC).

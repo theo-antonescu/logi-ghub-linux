@@ -343,7 +343,8 @@ class DesignRenderer:
         return out
 
 
-def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80, 90, 96, 100, 120, 144, 150, 160, 180, 200, 240)):
+def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80, 90, 96, 100, 120, 144, 150, 160, 180, 200, 240),
+               max_size: int | None = None):
     """Frames for the keyboard's custom-animation slot: (frames, frame period ms, file bytes).
 
     Tries the smoothest frame period first and slows down until the animation fits. Raises
@@ -356,7 +357,8 @@ def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80
     for p in periods:
         frames = r.frames(p)
         try:
-            return frames, p, rgb_store.build_file(design.name[:31], frames, period_ms=p)
+            return frames, p, rgb_store.build_file(design.name[:31], frames, period_ms=p,
+                                                   max_size=max_size or rgb_store.FILE_SIZE)
         except ValueError as e:
             last = e
     raise ValueError(f"“{design.name}” has too much movement to store on the keyboard ({last}); "

@@ -91,8 +91,12 @@ def encode_frame(colors: dict[int, int]) -> list[bytes]:
 
 
 def build_file(name: str, frames: list[tuple[dict[int, int], int]], period_ms: int = 32, brightness: int = 100,
-               uid: bytes | None = None) -> bytes:
-    """``frames``: [(zone -> colour, duration in periods)]. Raises ValueError if it doesn't fit."""
+               uid: bytes | None = None, max_size: int = FILE_SIZE) -> bytes:
+    """``frames``: [(zone -> colour, duration in periods)]. Raises ValueError if it doesn't fit.
+
+    Files are padded to ``FILE_SIZE`` like G HUB's usual size; with a smaller ``max_size`` (G HUB sized
+    the brightness + 8 slot's file to its content) the file is only as large as it needs to be.
+    """
     records: list[bytes] = []
     index = 0
     previous: dict[int, int] = {}
@@ -102,15 +106,18 @@ def build_file(name: str, frames: list[tuple[dict[int, int], int]], period_ms: i
         records.append(bytes([OP_FRAME_END, 0x00]) + struct.pack(">HH", index, max(1, duration)) + bytes(11))
         previous = dict(colors)
         index += 1
-    if len(records) > MAX_RECORDS:
-        raise ValueError(f"animation needs {len(records)} commands; the keyboard stores at most {MAX_RECORDS}")
+    limit = (max_size - 16 - 16 - HEADER_SIZE) // RECORD
+    if len(records) > limit:
+        raise ValueError(f"animation needs {len(records)} commands; this slot stores at most {limit}")
+    used = HEADER_SIZE + len(records) * RECORD
+    units = 0x30 if max_size == FILE_SIZE else -(-(used - 16) // 256)  # body = units * 256 + 16
     header = bytearray(HEADER_SIZE)
-    header[0], header[7] = 0x01, 0x30
+    header[0], header[7] = 0x01, units
     header[0x10:0x30] = name.encode("ascii", "replace")[:31].ljust(32, b"\x00")
     header[0x30:0x40] = uid or uuid.uuid4().bytes
     header[0x40:0x4B] = struct.pack(">HHHHHB", index, 0, 0, index, period_ms, brightness)
     data = bytes(header) + b"".join(records)
-    return data + b"\xff" * (BODY_SIZE - len(data)) + TRAILER
+    return data + b"\xff" * (units * 256 + 16 - len(data)) + TRAILER
 
 
 def parse_file(data: bytes) -> dict:
