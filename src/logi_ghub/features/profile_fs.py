@@ -141,6 +141,14 @@ class ProfileFS:
             out += self.dev.call(F.PROFILE_MANAGEMENT, 12, off >> 8, off & 0xFF, 0)
         return out[:size]
 
+    def active(self) -> tuple[bool, int]:
+        """(in on-board mode, number of the profile in use), from the state query G HUB sends (fn 6, zeros).
+
+        The reply's first byte is 1 in on-board mode and 0 while the host owns the keyboard.
+        """
+        d = self.dev.call(F.PROFILE_MANAGEMENT, 6, 0, 0, 0)
+        return d[0] == 1, d[2]
+
     def profiles(self, bank: int = 0) -> list[StoredProfile]:
         entries = parse_directory(self.read_file(bank, 0, DIR_SIZE))
         return [parse_profile(n, f, self.read_file(bank, f, PROFILE_SIZE)) for n, f, _crc in entries]

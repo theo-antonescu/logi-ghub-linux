@@ -92,6 +92,7 @@ class DevicePane(Gtk.Box):
         self.light_state = "onboard"
         self.onboard_effects: list[str] = []
         self.stored_profiles = []
+        self.stored_active: int | None = None
         self.animator = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
@@ -180,7 +181,9 @@ class DevicePane(Gtk.Box):
                 from ..features.profile_fs import ProfileFS
 
                 try:
-                    data["stored_profiles"] = ProfileFS(dev.hidpp).profiles(0)
+                    fs = ProfileFS(dev.hidpp)
+                    data["stored_profiles"] = fs.profiles(0)
+                    data["stored_active"] = fs.active()[1]
                 except Exception as e:  # noqa: BLE001 - optional information
                     log.info("could not read on-board profiles: %s", e)
             data["info"] = dev.describe()
@@ -198,6 +201,7 @@ class DevicePane(Gtk.Box):
         self.device_brightness = data.get("brightness")
         self.onboard_effects = data.get("onboard_effects", [])
         self.stored_profiles = data.get("stored_profiles", [])
+        self.stored_active = data.get("stored_active")
         active_name = profiles.get_active().get(self.dev.key)
         applied = lightfx.last_applied(self.dev.key)
         if active_name and daemon_running():
@@ -811,6 +815,9 @@ class DevicePane(Gtk.Box):
                 sw.set_rgba(int_to_rgba(c))
                 swatches.append(sw)
             row.add_suffix(swatches)
+            if sp.number == self.stored_active:
+                row.add_prefix(Gtk.Image(icon_name="object-select-symbolic", tooltip_text="The profile the keyboard is using"))
+                row.set_subtitle(row.get_subtitle() + " · in use")
             preview = light.to_lighting()
             if preview is not None:
                 b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Show this in the picture below (approximate)")

@@ -281,11 +281,16 @@ def cmd_lighting(args) -> None:
         if not dev.has(F.PROFILE_MANAGEMENT):
             raise SystemExit(f"{dev.name} has no on-board profile storage of this kind")
         names = dev.rgb.onboard_effect_names() if isinstance(dev.rgb, lighting.RGBEffects) else []
-        for sp in ProfileFS(dev.hidpp).profiles(0):
+        fs = ProfileFS(dev.hidpp)
+        onboard, in_use = fs.active()
+        for sp in fs.profiles(0):
             desc = sp.lighting.describe()
             if sp.lighting.effect_id == 0x0C and sp.lighting.params[0] < len(names):
                 desc = f"custom animation '{names[sp.lighting.params[0]]}'"
-            print(f"profile {sp.number} {sp.name!r}: {desc} (power save: {sp.powersave_lighting.describe()})")
+            mark = " [in use]" if sp.number == in_use else ""
+            print(f"profile {sp.number} {sp.name!r}{mark}: {desc} (power save: {sp.powersave_lighting.describe()})")
+        if not onboard:
+            print("(the computer currently controls the keyboard)")
         return
     if sub == "info":
         rgb = _need(dev.rgb, "lighting", dev)
