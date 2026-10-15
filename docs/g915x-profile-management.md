@@ -20,6 +20,23 @@ full power and the one used in power-save mode.
 Effect 0x0C plays one of the custom animations stored on the keyboard; 0x8071 getInfo with
 type 1 returns their names and UUIDs. G HUB never reads the animation frames back.
 
+## Mode and active profile (tested on the keyboard)
+
+* fn 6 `00 00 00` is a query: the reply starts `mode 00 profile`, with mode 1 for on-board and 0 while
+  the host owns the keyboard. fn 6 `05` switches to host mode and fn 6 `03` back to on-board; neither
+  changes the profile number.
+* A slot picked with brightness + N on the keyboard is not part of that state, and no query
+  tested reports it. Any lighting takeover (0x8071 software control, with or without host mode) makes the
+  keyboard forget it within a few seconds of the hand-back, and it then shows the active profile's
+  own lighting.
+* 0x8071 fn 5 `01 03 06` claims software control with the host handling power: the keyboard sends
+  fn 1 user-activity events (`00` idle after the power-save timeout, `01` active), and the host
+  switches the LEDs off and on with fn 8. With flags `04` only, the firmware runs its own power-save
+  and puts the stored lighting back over the host's colours.
+* While a stored custom animation is the zone's effect, it keeps painting keys over host per-key
+  colours. Setting the zone to the fixed effect (not persisted) stops it; the animation may still
+  finish its current frame.
+
 ## Writing (seen, not implemented)
 
 G HUB also sent these while starting up; their exact meaning is not known yet:
