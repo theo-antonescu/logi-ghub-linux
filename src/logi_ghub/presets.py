@@ -9,9 +9,9 @@ from .design import Design, Layer
 # the owner's G HUB lighting (red Esc/Enter/Backspace/Super, ...), with purple F-keys.
 PY_STRING = 0x3C96FF  # letters
 PY_NUMBER = 0x00FF00  # 0-9: terminal green
-PY_SPECIAL = 0xFFEC00  # Tab, Caps, Shift, Ctrl, Alt, Menu, `
+PY_YELLOW = 0xFFEC00  # ` - = [ ] \ ; ' , . /
 PY_RED = 0xFF1010  # Esc, Backspace, Enter, Super
-PY_PUNCT = 0xFFFFFF  # punctuation and - = / \
+PY_WHITE = 0xFFFFFF  # Tab, Caps, Shift, Ctrl, Alt, Menu
 PY_PURPLE = 0xB000D8  # F1-F12
 PY_SKY = 0x40B0FF  # Space, arrows
 PY_DEEP_BLUE = 0x3060FF  # PrtSc, ScrLk, Pause
@@ -27,11 +27,11 @@ def _python_groups() -> list[tuple[str, list[str], int]]:
     return [
         ("Letters (strings)", list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), PY_STRING),
         ("Numbers", list("1234567890"), PY_NUMBER),
-        ("Special keys", ["LeftCtrl", "RightCtrl", "LeftShift", "RightShift", "LeftAlt", "RightAlt", "Menu", "Tab",
-                          "CapsLock", "Grave"], PY_SPECIAL),
+        ("Modifier keys", ["LeftCtrl", "RightCtrl", "LeftShift", "RightShift", "LeftAlt", "RightAlt", "Menu", "Tab",
+                           "CapsLock"], PY_WHITE),
         ("Esc, Backspace, Enter, Super", ["Esc", "Backspace", "Enter", "LeftMeta", "RightMeta"], PY_RED),
-        ("Punctuation", ["Minus", "Equal", "Slash", "Backslash", "Comma", "Dot", "Semicolon", "Apostrophe",
-                         "LeftBracket", "RightBracket"], PY_PUNCT),
+        ("Punctuation and symbols", ["Grave", "Minus", "Equal", "Slash", "Backslash", "Comma", "Dot", "Semicolon",
+                                     "Apostrophe", "LeftBracket", "RightBracket"], PY_YELLOW),
         ("F keys", [f"F{i}" for i in range(1, 13)], PY_PURPLE),
         ("Space and arrows", ["Space", "Up", "Down", "Left", "Right"], PY_SKY),
         ("PrtSc, ScrLk, Pause", ["PrintScreen", "ScrollLock", "Pause"], PY_DEEP_BLUE),
