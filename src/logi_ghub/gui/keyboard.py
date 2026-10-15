@@ -27,6 +27,7 @@ CAP = _rgba(0.075, 0.08, 0.09)  # black keycaps
 CAP_TOP = _rgba(0.11, 0.115, 0.13)
 CAP_EDGE = _rgba(1, 1, 1, 0.10)
 UNLIT = _rgba(0.36, 0.38, 0.41)  # legend of a key that is off
+SELECTED = _rgba(1, 1, 1, 0.9)
 
 
 class KeyboardView(Gtk.Widget):
@@ -45,6 +46,7 @@ class KeyboardView(Gtk.Widget):
         self.caps = layout.keycaps(available_zones)
         self.buttons = {c.zone: c for c in self.caps}  # zones shown
         self.colors: dict[int, int] = {}
+        self.selected: set[int] = set()  # zones drawn with an outline (the keys of the layer being edited)
         x0, y0, x1, y1 = layout.bounds(self.caps, decor=True)
         self.x0, self.y0, self.x1, self.y1 = x0 - self.PAD, y0 - self.PAD, x1 + self.PAD, y1 + self.PAD
         self.set_hexpand(True)
@@ -103,6 +105,12 @@ class KeyboardView(Gtk.Widget):
         else:
             self.colors[zone] = rgb
         self.queue_draw()
+
+    def set_selected(self, zones) -> None:
+        zones = set(zones)
+        if zones != self.selected:
+            self.selected = zones
+            self.queue_draw()
 
     def set_colors(self, colors: dict[int, int], default: int | None = None) -> None:
         new = {z: colors.get(z, default) for z in self.buttons if colors.get(z, default) is not None}
@@ -192,6 +200,9 @@ class KeyboardView(Gtk.Widget):
                 snapshot.pop()
             if c.label:
                 self._legend(snapshot, c.label, font, x, y - (0 if c.round else 0.03 * unit), w, h, legend, lit)
+            if c.zone in self.selected:
+                rr = self._rounded(x - 1, y - 1, w + 2, h + 2, (w / 2 if c.round else 0.12 * unit) + 1)
+                snapshot.append_border(rr, [2.5] * 4, [SELECTED] * 4)
 
 
 def rgba_to_int(rgba: Gdk.RGBA) -> int:
