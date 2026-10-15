@@ -4,12 +4,12 @@ from logi_ghub.features import rgb_store
 ZONES = list(range(1, 112)) + [153, 155, 156, 157, 158, 210]
 
 
-def test_python_romania_design_matches_the_original_animation():
+def test_python_romania_design_fits_with_a_seamless_loop():
     d = presets.python_romania_design()
     frames, period, data = design.fit_frames(d, ZONES)
-    assert period == 48 and len(frames) == 150
+    assert sum(n for _, n in frames) * period == d.loop_ms() == 7200  # no jump where the loop restarts
     info = rgb_store.parse_file(data)
-    assert info["name"] == "Python + Romania" and len(info["frames"]) == 150
+    assert info["name"] == "Python + Romania" and info["period_ms"] == period
     a = layout.zone_of("A")
     assert all(f[a] == presets.PY_STRING for f, _ in frames)  # letters never move
     ins, pgup = layout.zone_of("Insert"), layout.zone_of("PageUp")

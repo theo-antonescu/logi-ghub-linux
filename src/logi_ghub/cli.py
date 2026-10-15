@@ -266,15 +266,17 @@ def cmd_lighting(args) -> None:
         from . import presets
         from .features import rgb_store
 
-        if args.name not in presets.PRESETS:
-            raise SystemExit("presets: " + ", ".join(presets.PRESETS))
+        from .design import fit_frames
+
+        if args.name not in presets.DESIGNS:
+            raise SystemExit("presets: " + ", ".join(presets.DESIGNS))
         if not args.yes:
             raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
-        title, make, period = presets.PRESETS[args.name]
-        data = rgb_store.build_file(title, make(dev.per_key.zones, period_ms=period), period_ms=period)
+        title, make = presets.DESIGNS[args.name]
+        _frames, period, data = fit_frames(make(), dev.per_key.zones)
         rgb_store.Uploader(dev.hidpp).upload(1, data)
         rgb_store.save_local(dev.key, 1, data)
-        print(f"saved '{title}' to brightness + 9")
+        print(f"saved '{title}' to brightness + 9 ({period} ms per frame)")
         return
     if sub == "store":
         from .features import rgb_store

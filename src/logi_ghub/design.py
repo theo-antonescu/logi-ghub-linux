@@ -201,7 +201,7 @@ class DesignRenderer:
         return out
 
 
-def fit_frames(design: Design, zones: list[int], periods=(48, 64, 80, 96, 128, 160, 200, 256)):
+def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80, 90, 96, 100, 120, 144, 150, 160, 180, 200, 240)):
     """Frames for the keyboard's custom-animation slot: (frames, frame period ms, file bytes).
 
     Tries the smoothest frame period first and slows down until the animation fits. Raises
