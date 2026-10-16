@@ -346,22 +346,22 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
 def _flutter(fx: float, fy: float, t: float, floor: float, steps: int = 2) -> float:
     """Brightness 0-1 of a flag fluttering in the wind (fx, fy: 0-1 across it, the pole on the left).
 
-    Three sets of folds of different sizes and speeds run from the pole to the free end; their
-    crests catch the light and their troughs fall into shadow (down to ``floor``). The folds curve a
-    little and the wind comes in gusts, and they are stronger towards the free end. All periods divide
-    6 s, so loops of 6, 12, 18, 24 ... s are seamless. ``steps`` brightness steps per side (more is
+    Three sets of folds of different sizes and speeds run from the pole to the free end, each fold a
+    band of shadow down to ``floor``; they curve a little, the wind comes in gusts, and they are deeper
+    towards the free end. About a quarter of the keys are well into a fold at any moment. All periods
+    divide 6 s, so loops of 6, 12, 18, 24 ... s are seamless. ``steps``: brightness steps (more is
     smoother but needs more storage).
     """
     bend = 0.05 * math.sin(2 * math.pi * (0.8 * fy - t / 3.0))  # folds curve and sway
     u = fx - 0.08 * (1 - fy) + bend
-    gust = 0.75 + 0.25 * math.sin(2 * math.pi * t / 6.0)
-    wave = (0.55 * math.sin(2 * math.pi * (1.4 * u - t / 2.0))
-            + 0.30 * math.sin(2 * math.pi * (2.3 * u - t / 1.2 + 0.4 + 0.2 * fy))
-            + 0.15 * math.sin(2 * math.pi * (3.7 * u - t / 0.75 + 0.1)))
-    s = max(-1.0, min(1.0, wave * gust * (0.3 + 0.7 * fx) * 1.3))
-    s = round(s * steps) / steps
-    rest = 0.88  # a flat flag; crests brighten to full, troughs darken to floor
-    return rest + (1 - rest) * s if s > 0 else rest + (rest - floor) * s
+    gust = 0.85 + 0.15 * math.sin(2 * math.pi * t / 6.0)
+
+    def fold(k: float, period: float, offset: float) -> float:
+        return max(0.0, math.sin(2 * math.pi * (k * u - t / period + offset)))
+
+    shade = (0.75 * fold(1.4, 2.0, 0) + 0.45 * fold(2.3, 1.2, 0.4 + 0.2 * fy) + 0.2 * fold(3.7, 0.75, 0.1))
+    shade = min(1.0, shade * gust * (0.55 + 0.45 * fx) * 1.6)
+    return 1 - (1 - floor) * round(shade * steps) / steps
 
 
 def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.22,
