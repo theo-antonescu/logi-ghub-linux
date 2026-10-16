@@ -282,11 +282,25 @@ def _romania(fx: float, fy: float) -> int:
 
 
 def _canada(fx: float, fy: float) -> int:
-    if fx < 0.25 or fx > 0.75:
+    """Centred on the space bar (the middle of the typing area), with the leaf's stem on B."""
+    centre, stem = _canada_anchor()
+    if abs(fx - centre) > 0.25:
         return FLAG_RED
-    # the leaf fills most of the white square in the middle; the keyboard is about 2.8 times wider than tall
-    lx, ly = (fx - 0.31) / 0.32, (fy - 0.16) / 0.84  # a band of white all round it
+    top, width = 0.22, 0.30
+    lx, ly = (fx - (centre - width / 2)) / width, (fy - top) / (stem + 0.03 - top)
     return FLAG_RED if 0 <= lx <= 1 and 0 <= ly <= 1 and _inside(lx, ly, MAPLE_LEAF) else FLAG_WHITE
+
+
+_ANCHOR: tuple[float, float] | None = None
+
+
+def _canada_anchor() -> tuple[float, float]:
+    """(space bar's x, B row's y), as fractions of the whole keyboard."""
+    global _ANCHOR
+    if _ANCHOR is None:
+        pos = _positions(layout.keycaps())
+        _ANCHOR = (pos["Space"][0], pos["B"][1])
+    return _ANCHOR
 
 
 FLAGS = {"romania": ("Romania", _romania), "canada": ("Canada", _canada)}
