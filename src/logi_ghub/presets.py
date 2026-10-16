@@ -41,28 +41,29 @@ def _python_groups() -> list[tuple[str, list[str], int]]:
 
 
 def python_romania_design() -> Design:
-    """Python-theme keys; on the block right of the main keys (PrtSc to the arrows) the Romanian flag
-    rises row by row out of a light blue sky, waves, and fades back; and the flag colours fall in
-    bands from left to right across the logo, brightness and music keys."""
+    """Python-theme keys. On the block right of the main keys (PrtSc to the arrows) a Romanian flag
+    ceremony plays: the flag is raised row by row out of a light blue sky, flutters in the wind, is
+    lowered, and fireworks in its colours burst over the sky. Across the logo, brightness and music
+    keys a white-hot head sweeps back and forth, its trail cooling through blue, yellow and red."""
     layers = [Layer(name, keys, "static", [colour]) for name, keys, colour in _python_groups()]
-    layers.append(Layer("Romanian flag", [k for col in NAV_COLUMNS for k in col], "raise", [RO_BLUE, RO_YELLOW, RO_RED],
-                        period_ms=6000, direction="right", floor=0.45, background=SKY))
-    layers.append(Layer("Logo and music keys", ["Logo", "Brightness", "Previous", "Play/Pause", "Next", "Mute"], "sequence",
-                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=3000, direction="right", fade=True, spread=0.6))
+    layers.append(Layer("Romanian flag ceremony", [k for col in NAV_COLUMNS for k in col], "ceremony",
+                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=18000, floor=0.55, background=SKY))
+    layers.append(Layer("Logo and music keys", ["Logo", "Brightness", "Previous", "Play/Pause", "Next", "Mute"], "scanner",
+                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=3000, floor=0.35, spread=0.7))
     return Design("Python + Romania", layers)
 
 
 def romania_canada_design() -> Design:
-    """The whole keyboard as one big Romanian flag, rippling, then a Canadian flag, in turn; on the
-    right-hand block a small flag of the same country is raised, waves and fades each time."""
+    """The whole keyboard as one big Romanian flag fluttering in the wind, then a Canadian one, in turn;
+    on the right-hand block a small flag of the same country has its own ceremony each time."""
     every = [c.name for c in layout.keycaps()]
     right_block = [k for col in NAV_COLUMNS for k in col]
     return Design("Romania + Canada", [
-        # four overlapping diagonal ripples cross each flag, dimming it to 60%
-        Layer("Flags", every, "flags", [], period_ms=10000, floor=0.6, spread=4, flags=["romania", "canada"]),
-        # on the block right of the main keys: a small flag rises out of a light blue sky, waves and
-        # fades, the Romanian one while the big Romanian flag shows, then the Canadian one
-        Layer("Flag raising", right_block, "raise", [], period_ms=10000, direction="right", floor=0.6, background=SKY,
+        # each flag flutters in the wind for 12 s (crests catch the light, folds fall into shadow)
+        Layer("Flags", every, "flags", [], period_ms=12000, floor=0.6, flags=["romania", "canada"]),
+        # on the block right of the main keys: a small flag of the same country is raised, flutters,
+        # is lowered and fireworks follow, Romania while the big Romanian flag shows, then Canada
+        Layer("Flag ceremony", right_block, "ceremony", [], period_ms=12000, floor=0.6, background=SKY,
               flags=["romania", "canada"]),
     ])
 

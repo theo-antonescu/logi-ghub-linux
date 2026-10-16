@@ -266,13 +266,13 @@ def cmd_lighting(args) -> None:
         from . import presets
         from .features import rgb_store
 
-        from .design import fit_frames
+        from .design import fit_best
 
         if args.name not in presets.DESIGNS:
             raise SystemExit("presets: " + ", ".join(presets.DESIGNS))
         slot = _animation_slot(args)
         title, make = presets.DESIGNS[args.name]
-        _frames, period, data = fit_frames(make(), dev.per_key.zones)
+        _frames, period, data, _detail = fit_best(make(), dev.per_key.zones)
         rgb_store.Uploader(dev.hidpp).upload(slot, data, allow_slot0=slot == 0)
         rgb_store.save_local(dev.key, slot, data)
         print(f"saved '{title}' to brightness + {8 + slot} ({period} ms per frame)")

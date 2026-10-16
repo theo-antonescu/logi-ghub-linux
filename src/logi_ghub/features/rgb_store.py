@@ -266,9 +266,9 @@ def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) ->
     """Turn the app's lighting into an animation and save it in ``slot``. Returns the parsed result."""
     zones = dev.per_key.zones
     if light.get("design"):
-        from ..design import Design, fit_frames
+        from ..design import Design, fit_best
 
-        _frames, _period, data = fit_frames(Design.from_dict({**light["design"], "name": name}), zones)
+        _frames, _period, data, _detail = fit_best(Design.from_dict({**light["design"], "name": name}), zones)
     else:
         data = build_file(name, frames_from_lighting(light, zones))
     Uploader(dev.hidpp).upload(slot, data, progress)

@@ -45,6 +45,8 @@ EFFECTS = {
     "flags": "Flags (whole keyboard, in turn)",
     "frames": "Frames (paint each frame)",
     "flag_stream": "Rising flags (one flag per row)",
+    "ceremony": "Flag ceremony (raise, flutter, lower, fireworks)",
+    "scanner": "Scanner (a bright head sweeping back and forth)",
 }
 # How a frame turns into the next one (G HUB's transition curves)
 TRANSITIONS = {
@@ -102,13 +104,15 @@ class Layer:
     # frames effect: [{"colors": {key name: colour}, "ms": time shown, "transition": TRANSITIONS key}]
     frames: list[dict] = field(default_factory=list)
     cycle: str = "loop"  # frames effect: "loop" (1, 2, 3, 1, 2, 3) or "bounce" (1, 2, 3, 2, 1, 2, 3)
+    detail: int = 0  # flags/ceremony: brightness steps of the flutter (0 = a few); more is smoother but bigger
 
     def to_dict(self) -> dict:
         return {"name": self.name, "keys": list(self.keys), "effect": self.effect, "colors": [int(c) for c in self.colors],
                 "period_ms": self.period_ms, "direction": self.direction, "fade": self.fade, "floor": self.floor,
                 "spread": self.spread, "background": self.background, "flags": list(self.flags),
                 "frames": [{"colors": dict(f.get("colors", {})), "ms": int(f.get("ms", 370)),
-                            "transition": f.get("transition", "linear")} for f in self.frames], "cycle": self.cycle}
+                            "transition": f.get("transition", "linear")} for f in self.frames], "cycle": self.cycle,
+                "detail": self.detail}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Layer":
@@ -120,7 +124,7 @@ class Layer:
                    flags=list(d.get("flags", [])),
                    frames=[{"colors": {k: int(v) for k, v in f.get("colors", {}).items()}, "ms": int(f.get("ms", 370)),
                             "transition": f.get("transition", "linear")} for f in d.get("frames", [])],
-                   cycle=d.get("cycle", "loop"))
+                   cycle=d.get("cycle", "loop"), detail=int(d.get("detail", 0)))
 
     @property
     def animated(self) -> bool:
@@ -133,7 +137,7 @@ class Layer:
         """Time until the layer repeats: one period, one per flag (flags) or the frames' total (frames)."""
         if self.effect == "frames":
             return max(50, sum(ms for _c, ms, _tr in self.timeline()))
-        n = max(1, len(self.flags)) if self.effect in ("flags", "flag_stream", "raise") else 1
+        n = max(1, len(self.flags)) if self.effect in ("flags", "flag_stream", "raise", "ceremony") else 1
         return max(50, self.period_ms) * n
 
     def timeline(self) -> list[tuple[dict, int, str]]:
@@ -335,19 +339,29 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
         current = flags[(i + 1) % len(flags)]
     # folds flutter from the pole (left) to the free end (right), nearly upright, stronger towards
     # the free end, as on a real flag in the wind
-    level = _flutter(fx, fy, t, layer.floor)
+    level = _flutter(fx, fy, t, layer.floor, layer.detail or 2)
     return scale(current(fx, fy, name), level)
 
 
 def _flutter(fx: float, fy: float, t: float, floor: float, steps: int = 2) -> float:
-    """Brightness 0-1 of a flag fluttering in the wind: two sets of folds of different sizes and
-    speeds run from left to right, leaning slightly (about 80 degrees), deeper towards the free end.
-    Kept to a few steps so the animation stays small enough to store."""
-    u = fx - 0.08 * (1 - fy)
-    big = max(0.0, math.sin(2 * math.pi * (1.5 * u - t / 2.0))) ** 2  # periods divide the 20 s loop
-    small = max(0.0, math.sin(2 * math.pi * (2.5 * u - t / 1.25 + 0.3))) ** 2
-    fold = min(1.0, 0.65 * big + 0.5 * small) * (0.35 + 0.65 * fx)
-    return 1 - (1 - floor) * round(fold * steps) / steps
+    """Brightness 0-1 of a flag fluttering in the wind (fx, fy: 0-1 across it, the pole on the left).
+
+    Three sets of folds of different sizes and speeds run from the pole to the free end; their
+    crests catch the light and their troughs fall into shadow (down to ``floor``). The folds curve a
+    little and the wind comes in gusts, and they are stronger towards the free end. All periods divide
+    6 s, so loops of 6, 12, 18, 24 ... s are seamless. ``steps`` brightness steps per side (more is
+    smoother but needs more storage).
+    """
+    bend = 0.05 * math.sin(2 * math.pi * (0.8 * fy - t / 3.0))  # folds curve and sway
+    u = fx - 0.08 * (1 - fy) + bend
+    gust = 0.75 + 0.25 * math.sin(2 * math.pi * t / 6.0)
+    wave = (0.55 * math.sin(2 * math.pi * (1.4 * u - t / 2.0))
+            + 0.30 * math.sin(2 * math.pi * (2.3 * u - t / 1.2 + 0.4 + 0.2 * fy))
+            + 0.15 * math.sin(2 * math.pi * (3.7 * u - t / 0.75 + 0.1)))
+    s = max(-1.0, min(1.0, wave * gust * (0.3 + 0.7 * fx) * 1.3))
+    s = round(s * steps) / steps
+    rest = 0.88  # a flat flag; crests brighten to full, troughs darken to floor
+    return rest + (1 - rest) * s if s > 0 else rest + (rest - floor) * s
 
 
 def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.22,
@@ -383,6 +397,75 @@ def _frames_effect(layer: "Layer", name: str, t: float) -> int:
             return lerp(colors.get(name, 0), nxt.get(name, 0), ease(min(1.0, pos / ms)))
         pos -= ms
     return 0
+
+
+def _ceremony(layer: "Layer", colors: list[int], zone: int, fx: float, fy: float, t: float, name: str) -> int:
+    """A small flag's ceremony, one per period: it is raised row by row out of the sky, flutters in the
+    wind, is lowered again, and fireworks in its colours burst over the empty sky.
+
+    With several layer.flags each period has the next one (Romania, then Canada with the leaf on the
+    centre key, ...); otherwise the colours run in columns.
+    """
+    per = max(50, layer.period_ms) / 1000
+    cycle = t / per
+    phase = cycle % 1.0
+    if layer.flags:
+        which = layer.flags[int(cycle) % len(layer.flags)]
+        base = FLAG_ROWS.get(which, FLAG_ROWS["romania"])[min(2, int(fx * 3))]
+        if which == "canada" and name == "Home":
+            base = FLAG_RED
+        palette = list(FLAG_ROWS.get(which, FLAG_ROWS["romania"]))
+    else:
+        base = colors[min(len(colors) - 1, int(fx * len(colors)))]
+        palette = colors
+    sky = 0 if layer.background is None else lerp(layer.background, 0xFFFFFF, (1 - fy) * 0.55)
+    height = 1 - fy  # 0 at the bottom row
+    flag = scale(base, _flutter(fx, fy, t, layer.floor, layer.detail or 2))
+    rise, lower, fireworks = 0.16, 0.72, 0.84  # phase boundaries
+    soft = 0.35
+    if phase < rise:  # raised: rows fill from the bottom
+        edge = phase / rise * (1 + soft)
+        return lerp(sky, flag, min(1.0, max(0.0, (edge - height) / soft)))
+    if phase < lower:
+        return flag
+    if phase < fireworks:  # lowered: rows empty from the top
+        edge = (phase - lower) / (fireworks - lower) * (1 + soft)
+        return lerp(flag, sky, min(1.0, max(0.0, (edge - (1 - height)) / soft)))
+    # fireworks: bursts in the flag's colours, each key flashing and fading at its own moment
+    local = (phase - fireworks) / (1 - fireworks)
+    night = math.sin(math.pi * min(1.0, local * 1.15)) ** 0.6  # the sky darkens for the fireworks, then dawns
+    sky = lerp(sky, 0x000818, night * 0.9)
+    bursts = 3
+    b = int(local * bursts)
+    within = local * bursts - b
+    if _noise(zone, int(cycle) * 7 + b) < 0.45:
+        flash = palette[int(_noise(zone + 501, int(cycle) * 7 + b) * len(palette)) % len(palette)]
+        start = _noise(zone + 77, b) * 0.4
+        if within >= start:  # a bright flash that fades back into the sky
+            return lerp(flash, sky, min(1.0, (within - start) / 0.55) ** 0.7)
+    return sky
+
+
+def _scanner(layer: "Layer", colors: list[int], fx: float, t: float) -> int:
+    """A bright head sweeping back and forth, leaving a trail that cools through the colours."""
+    per = max(50, layer.period_ms) / 1000
+    phase = (t / per) % 1.0
+    head = phase * 2 if phase < 0.5 else 2 - phase * 2  # 0 -> 1 -> 0
+    moving_right = phase < 0.5
+    behind = (head - fx) if moving_right else (fx - head)
+    width = max(0.1, layer.spread)
+    dim = scale(colors[-1], layer.floor * 0.4)
+    if behind < -0.08:  # ahead of the head
+        return dim
+    if behind < 0.08:  # the head itself: white hot
+        return lerp(0xFFFFFF, colors[0], max(0.0, behind) / 0.08)
+    part = min(1.0, (behind - 0.08) / width)
+    if part >= 1:
+        return dim
+    k = part * (len(colors) - 1)
+    i = int(k)
+    c = lerp(colors[i], colors[min(i + 1, len(colors) - 1)], k - i)
+    return lerp(c, dim, part ** 1.5)
 
 
 class DesignRenderer:
@@ -431,6 +514,10 @@ class DesignRenderer:
                     c = scale(colors[0], layer.floor + (1 - layer.floor) * level)
                 elif layer.effect == "flags":
                     c = _flags_effect(layer, fx, fy, t, self.names[zone])
+                elif layer.effect == "ceremony":
+                    c = _ceremony(layer, colors, zone, fx, fy, t, self.names[zone])
+                elif layer.effect == "scanner":
+                    c = _scanner(layer, colors, fx, t)
                 elif layer.effect == "flag_stream":
                     c = _flag_stream(layer, fx, self.rows[zone], t)
                 elif layer.effect == "frames":
@@ -457,7 +544,8 @@ class DesignRenderer:
         return out
 
 
-def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80, 90, 96, 100, 120, 144, 150, 160, 180, 200, 240),
+def fit_frames(design: Design, zones: list[int], periods=(32, 36, 40, 45, 48, 50, 60, 72, 75, 80, 90, 96, 100, 120, 144, 150, 160,
+                                                          180, 200, 240),
                max_size: int | None = None):
     """Frames for the keyboard's custom-animation slot: (frames, frame period ms, file bytes).
 
@@ -469,7 +557,9 @@ def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80
     r = design.renderer(zones)
     last = None
     sizes = [max_size] if max_size else [rgb_store.FILE_SIZE, rgb_store.LARGE_FILE_SIZE]
-    for p in periods:
+    loop = design.loop_ms()
+    usable = [p for p in periods if not loop or loop % p == 0] or list(periods)  # whole frames per loop: no jump
+    for p in usable:
         frames = r.frames(p)
         for size in sizes:  # a bigger file before a jerkier animation
             try:
@@ -478,6 +568,31 @@ def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80
                 last = e
     raise ValueError(f"“{design.name}” has too much movement to store on the keyboard ({last}); "
                      "use fewer animated keys or slower effects")
+
+
+def fit_best(design: Design, zones: list[int], details=(12, 10, 8, 6, 5, 4, 3, 2), periods=(32, 36, 40, 45, 48)):
+    """Like fit_frames, but for designs with flutter: the most detail that still fits smoothly.
+
+    Tries the brightness steps of every layer that has them (most first) at fast frame periods, then
+    falls back to fit_frames' slower periods with the least detail. Returns (frames, period, data, detail).
+    """
+    tuned = [layer for layer in design.layers if layer.effect in ("flags", "ceremony")]
+    if not tuned:
+        return (*fit_frames(design, zones), 0)
+    loop = design.loop_ms()
+    periods = [p for p in periods if not loop or loop % p == 0] or periods
+    for period in periods:  # the fastest frame rate first, with as much detail as fits at it
+        for d in details:
+            for layer in tuned:
+                layer.detail = d
+            try:
+                frames, p, data = fit_frames(design, zones, periods=(period,))
+                return frames, p, data, d
+            except ValueError:
+                continue
+    for layer in tuned:
+        layer.detail = details[-1]
+    return (*fit_frames(design, zones), details[-1])
 
 
 def from_lighting(light: dict, name: str = "My design") -> Design:

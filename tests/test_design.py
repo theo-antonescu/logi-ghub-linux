@@ -101,3 +101,25 @@ def test_raising_flags_alternate_countries():
     assert ca[z("Insert")] >> 16 > 0x80 and ca[z("Home")] >> 16 > 0x80 and ca[z("Home")] & 0xFF < 0x40  # leaf red
     assert ca[z("ScrollLock")] & 0xFF > 0x60  # white middle column
     assert layer.cycle_ms == 12000  # 6 s per flag here
+
+
+def test_ceremony_raises_flutters_lowers_and_ends_in_fireworks():
+    keys = [k for col in presets.NAV_COLUMNS for k in col]
+    flag = [presets.RO_BLUE, presets.RO_YELLOW, presets.RO_RED]
+    layer = design.Layer("c", keys, "ceremony", flag, period_ms=10000, floor=0.6, background=0x50B0FF)
+    r = design.Design("t", [layer]).renderer(ZONES)
+    ins = layout.zone_of("Insert")
+    sky_start = r.frame(0.0)[ins]
+    assert sky_start & 0xFF > 0x80 and sky_start >> 16 > 0x40  # pale sky before the flag is raised
+    up = r.frame(4.0)[ins]
+    assert up & 0xFF > 0x80 and up >> 16 < 0x40  # flag blue while it flutters
+    night = r.frame(9.2)[ins]
+    assert (night & 0xFF) < (sky_start & 0xFF)  # the sky darkens for the fireworks
+    assert r.frame(0.0) == r.frame(10.0)  # seamless loop
+
+
+def test_best_fit_is_smooth_and_seamless():
+    for make in (presets.romania_canada_design, presets.python_romania_design):
+        d = make()
+        frames, period, data, detail = design.fit_best(d, ZONES)
+        assert period <= 40 and d.loop_ms() % period == 0 and len(data) <= rgb_store.LARGE_FILE_SIZE

@@ -14,7 +14,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from .. import layout, lightfx, presets  # noqa: E402
-from ..design import DIRECTIONS, EFFECTS, Design, Layer, fit_frames, from_lighting  # noqa: E402
+from ..design import DIRECTIONS, EFFECTS, Design, Layer, fit_best, from_lighting  # noqa: E402
 from .editors import confirm  # noqa: E402
 from .keyboard import KeyboardView, int_to_rgba, rgba_to_int  # noqa: E402
 
@@ -513,7 +513,7 @@ class DesignLighting:
             self.toast("Saving to the keyboard…")
 
             def work():
-                frames, period, data = fit_frames(d, self.dev.per_key.zones)
+                frames, period, data, _detail = fit_best(d, self.dev.per_key.zones)
                 anim = getattr(self, "animator", None)
                 if anim:
                     anim.stop()
