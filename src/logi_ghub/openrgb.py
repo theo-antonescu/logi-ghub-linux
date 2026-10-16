@@ -29,7 +29,7 @@ UPDATE_MODE = 1101
 
 DEVICE_TYPES = ["Motherboard", "DRAM", "GPU", "Cooler", "LED strip", "Keyboard", "Mouse", "Mouse mat", "Headset",
                 "Headset stand", "Gamepad", "Light", "Speaker", "Virtual", "Storage", "Case", "Microphone", "Accessory",
-                "Keypad"]
+                "Keypad", "Laptop", "Monitor"]
 
 
 @dataclass
