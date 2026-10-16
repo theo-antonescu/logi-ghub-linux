@@ -450,10 +450,29 @@ def cmd_sync(args) -> int:
         t0 = anim.start_time if anim is not None else t0
     case = CaseLights(design, t0)
     case.start()
-    print(f"playing '{design.name}' on the keyboard and the other devices; Ctrl+C to stop")
+    print(f"playing '{design.name}' on the keyboard and the other devices; Ctrl+C to stop", flush=True)
+    from .caselight import idle_seconds
+
     try:
         while case.is_alive():
             time.sleep(0.5)
+            idle = idle_seconds() if args.off_after else None
+            if idle is None:
+                continue
+            away = idle >= args.off_after
+            if away and not case.dark.is_set():
+                case.dark.set()  # all lights off until the user is back
+                if anim is not None:
+                    anim.paused.set()
+                    dev.rgb.power(False)
+                print("idle: lights off", flush=True)
+            elif not away and case.dark.is_set():
+                case.dark.clear()
+                if anim is not None:
+                    dev.rgb.power(True)
+                    anim.last.clear()  # repaint every key
+                    anim.paused.clear()
+                print("back: lights on", flush=True)
     except KeyboardInterrupt:
         pass
     case.stop()
@@ -570,6 +589,8 @@ def main(argv: list[str] | None = None) -> int:
     q = sp.add_parser("sync", help="play a design on the keyboard and every OpenRGB device together, until Ctrl+C")
     q.add_argument("design", help="python-romania or romania-canada")
     q.add_argument("--no-keyboard", action="store_true", help="only the other devices")
+    q.add_argument("--off-after", type=float, default=300, metavar="SECONDS",
+                   help="turn every light off after this long without keyboard or mouse use (0: never; default 300)")
 
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")

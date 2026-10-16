@@ -62,6 +62,7 @@ class CaseLights(threading.Thread):
         self.fps = fps
         self.host = host
         self.stop_event = threading.Event()
+        self.dark = threading.Event()  # set while everything should be off (the user is away)
         self.devices: list[tuple[Controller, list[int]]] = []
 
     def run(self) -> None:
@@ -80,7 +81,7 @@ class CaseLights(threading.Thread):
                 last: dict[int, list[int]] = {}
                 while not self.stop_event.is_set():
                     started = time.monotonic()
-                    frame = renderer.frame(started - self.t0)
+                    frame = {} if self.dark.is_set() else renderer.frame(started - self.t0)
                     for c, zones in self.devices:
                         g = GAMMA.get(c.kind, 1.0)
                         colours = [corrected(frame.get(z, 0), g, balance_for(c.name)) for z in zones]
@@ -93,3 +94,16 @@ class CaseLights(threading.Thread):
 
     def stop(self) -> None:
         self.stop_event.set()
+
+
+def idle_seconds() -> float | None:
+    """How long the user has not touched any keyboard or mouse, from GNOME (None if unknown)."""
+    try:
+        from gi.repository import Gio
+
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply = bus.call_sync("org.gnome.Mutter.IdleMonitor", "/org/gnome/Mutter/IdleMonitor/Core",
+                              "org.gnome.Mutter.IdleMonitor", "GetIdletime", None, None, Gio.DBusCallFlags.NONE, 1000, None)
+        return reply.unpack()[0] / 1000
+    except Exception:  # not GNOME, no session bus
+        return None
