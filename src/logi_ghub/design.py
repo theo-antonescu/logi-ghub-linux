@@ -250,10 +250,11 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
         height = 1 - fy  # 0 at the bottom row
         # the sky behind the flag: the background colour, paler towards the top
         sky = 0 if layer.background is None else lerp(layer.background, 0xFFFFFF, (1 - fy) * 0.55)
-        wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
-        if layer.flags:  # a few steps only, so it stays small enough to store next to big animations
-            wave = round(wave * 3) / 3
-        flag = scale(base, layer.floor + (1 - layer.floor) * wave)
+        if layer.flags:  # diagonal ripples crossing it, like the big flags
+            flag = scale(base, _sweep(fx, fy, (phase * 2) % 1.0, layer.floor, width=0.3))
+        else:
+            wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
+            flag = scale(base, layer.floor + (1 - layer.floor) * wave)
         steps = (lambda k: round(k * 3) / 3) if layer.flags else (lambda k: k)
         # share of each cycle spent rising and fading; alternating flags stay up longer
         rise, fade = (0.2, 0.08) if layer.flags else (0.45, 0.15)
@@ -332,12 +333,27 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
     current = flags[i]
     if within > 1 - wipe and fx < (within - (1 - wipe)) / wipe * 1.05:
         current = flags[(i + 1) % len(flags)]
-    # brightness ripple, one wave per flag, in a few steps so whole columns change together (this keeps
-    # the animation small enough to store on the keyboard)
-    wave = 0.5 + 0.5 * math.sin(2 * math.pi * (t / per - fx * layer.spread))
-    steps = 4
-    level = layer.floor + (1 - layer.floor) * round(wave * (steps - 1)) / (steps - 1)
+    # a few diagonal ripples (layer.spread of them, rounded) cross each flag from left to right
+    ripples = max(1, round(layer.spread))
+    level = _sweep(fx, fy, (within / (1 - wipe) * ripples) % 1.0 if within < 1 - wipe else -1, layer.floor)
     return scale(current(fx, fy, name), level)
+
+
+def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.35) -> float:
+    """Brightness 0-1 for a soft diagonal band dimming the keys to ``floor`` as it crosses from left to right.
+
+    ``phase`` runs 0-1 over one crossing (negative: no band). Kept to a few steps so whole diagonals
+    change together, which keeps animations small enough to store.
+    """
+    if phase < 0:
+        return 1.0
+    u = fx + slant * (1 - fy)  # leaning: the top of the band is ahead
+    centre = -width + phase * (1 + slant + 2 * width)
+    d = abs(u - centre) / width
+    if d >= 1:
+        return 1.0
+    dip = 0.5 + 0.5 * math.cos(math.pi * d)  # 1 in the middle of the band, 0 at its edges
+    return 1 - (1 - floor) * round(dip * 3) / 3
 
 
 def _frames_effect(layer: "Layer", name: str, t: float) -> int:

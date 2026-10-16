@@ -58,10 +58,11 @@ def romania_canada_design() -> Design:
     every = [c.name for c in layout.keycaps()]
     right_block = [k for col in NAV_COLUMNS for k in col]
     return Design("Romania + Canada", [
-        Layer("Flags", every, "flags", [], period_ms=10000, floor=0.55, spread=1.5, flags=["romania", "canada"]),
+        # two diagonal ripples cross each flag, dimming it to half
+        Layer("Flags", every, "flags", [], period_ms=10000, floor=0.5, spread=2, flags=["romania", "canada"]),
         # on the block right of the main keys: a small flag rises out of a light blue sky, waves and
         # fades, the Romanian one while the big Romanian flag shows, then the Canadian one
-        Layer("Flag raising", right_block, "raise", [], period_ms=10000, direction="right", floor=0.45, background=SKY,
+        Layer("Flag raising", right_block, "raise", [], period_ms=10000, direction="right", floor=0.5, background=SKY,
               flags=["romania", "canada"]),
     ])
 
