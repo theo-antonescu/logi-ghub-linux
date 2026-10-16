@@ -34,7 +34,7 @@ import json
 import logging
 import struct
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..actions import Action
@@ -101,6 +101,8 @@ class OnboardInfo:
     def supported(self) -> bool:
         return self.memory_model == 1 and 1 <= self.profile_format <= 5 and self.macro_format == 1
 
+    supports_macros = True  # spare sectors hold them
+
 
 @dataclass
 class LightingEffect:
@@ -159,7 +161,13 @@ class LightingEffect:
 
 
 class OnboardProfile:
-    """A profile sector, kept as raw bytes with typed accessors so unknown bytes survive a rewrite."""
+    """A profile sector, kept as raw bytes with typed accessors so unknown bytes survive a rewrite.
+
+    The G600's profiles (features.g600.G600Profile) offer the same interface.
+    """
+
+    max_dpi_stages = 5
+    led = None  # lighting is in four effect slots (lighting()), not one LED setting as on the G600
 
     def __init__(self, data: bytes, sector: int = 0, enabled: bool = True):
         self.raw = bytearray(data)
@@ -167,9 +175,6 @@ class OnboardProfile:
         self.enabled = enabled
 
     # scalar fields
-    def _u8(self, off: int) -> int:
-        return self.raw[off]
-
     @property
     def report_rate_ms(self) -> int:
         return self.raw[0]
@@ -209,6 +214,20 @@ class OnboardProfile:
     @property
     def active_dpis(self) -> list[int]:
         return [d for d in self.dpis if d not in (0, 0xFFFF)]
+
+    @property
+    def shift_dpi(self) -> int | None:
+        """DPI while the sniper button is held; None if the stored index points at no stage."""
+        i = self.shift_dpi_index
+        return self.dpis[i] if i < 5 and self.dpis[i] not in (0, 0xFFFF) else None
+
+    def set_shift_dpi(self, value: int) -> None:
+        """On-board memory stores the DPI shift as the index of one of the stages; 0 leaves it as it is."""
+        if not value:
+            return
+        if value not in self.active_dpis:
+            raise ValueError(f"DPI shift {value} must be one of the DPI stages {self.active_dpis} for an on-board profile")
+        self.shift_dpi_index = self.dpis.index(value)
 
     @property
     def color(self) -> tuple[int, int, int]:

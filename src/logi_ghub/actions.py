@@ -13,7 +13,7 @@ On the device a binding is 4 bytes (HID++ 0x8100 profile format):
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 from . import keys
 
@@ -37,8 +37,6 @@ SPECIALS = {
     0x11: "Scroll up",
 }
 SPECIAL_BY_NAME = {v: k for k, v in SPECIALS.items()}
-
-KINDS = ("default", "none", "mouse", "key", "consumer", "special", "macro", "raw")
 
 
 @dataclass
@@ -165,16 +163,6 @@ class Action:
         if k == "macro":
             return f"Macro: {self.macro}" if self.macro else f"On-board macro @{self.sector:#x}:{self.address}"
         return f"Raw {self.raw}"
-
-
-@dataclass
-class ButtonSlot:
-    """Describes one physical control so the UI can name it."""
-
-    index: int  # 0-based binding index in the profile
-    name: str
-    gshift: bool = False
-    tags: list[str] = field(default_factory=list)
 
 
 def parse_action(text: str) -> Action:

@@ -160,7 +160,7 @@ def parse_file(data: bytes) -> dict:
 
 def frames_from_lighting(light: dict, zones: list[int], period_ms: int = 32) -> list[tuple[dict[int, int], int]]:
     """Sample the app's lighting (painted keys and/or a colour sequence) into stored frames."""
-    from ..lightfx import Renderer, sequence_color  # noqa: F401 - Renderer does the work
+    from ..lightfx import Renderer
 
     r = Renderer(light, zones)
     anim = r.animation
@@ -262,15 +262,26 @@ def load_local(model_key: str, slot: int) -> dict | None:
         return None
 
 
-def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
-    """Turn the app's lighting into an animation and save it in ``slot``. Returns the parsed result."""
-    zones = dev.per_key.zones
-    if light.get("design"):
-        from ..design import Design, fit_best
-
-        _frames, _period, data, _detail = fit_best(Design.from_dict({**light["design"], "name": name}), zones)
-    else:
-        data = build_file(name, frames_from_lighting(light, zones))
-    Uploader(dev.hidpp).upload(slot, data, progress)
+def store_data(dev, data: bytes, slot: int = 1, progress=None) -> dict:
+    """The one path that writes a custom-animation slot: upload, keep a copy, return the parsed file.
+    Slot 0 (brightness + 8) is written only by callers that pass it on purpose."""
+    Uploader(dev.hidpp).upload(slot, data, progress, allow_slot0=slot == 0)
     save_local(dev.key, slot, data)
     return parse_file(data)
+
+
+def store_design(dev, design, slot: int = 1, progress=None) -> tuple[dict, int]:
+    """Fit a lighting design (smoothest frame rate, most detail) and store it. Returns (file, frame ms)."""
+    from ..design import fit_best
+
+    _frames, period, data, _detail = fit_best(design, dev.per_key.zones)
+    return store_data(dev, data, slot, progress), period
+
+
+def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
+    """Store a profile's lighting: its design, or (older profiles) its painted keys and colour sequence."""
+    if light.get("design"):
+        from ..design import Design
+
+        return store_design(dev, Design.from_dict({**light["design"], "name": name}), slot, progress)[0]
+    return store_data(dev, build_file(name, frames_from_lighting(light, dev.per_key.zones)), slot, progress)

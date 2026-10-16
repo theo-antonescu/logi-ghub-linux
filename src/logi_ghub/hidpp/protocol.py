@@ -12,6 +12,7 @@ unsolicited notifications from the device.
 
 from __future__ import annotations
 
+import errno
 import logging
 import struct
 import threading
@@ -136,6 +137,7 @@ class Device:
         self._handlers: list[Callable[[Message], None]] = []
         self._listener: threading.Thread | None = None
         self._stop = threading.Event()
+        self.lost = False  # the node went away (unplugged) while the listener thread was reading it
         self._waiting: tuple[int, int] | None = None
         self._reply: Message | None = None
         self._reply_ready = threading.Event()
@@ -170,16 +172,12 @@ class Device:
                 log.exception("notification handler failed")
 
     def _raise_if_error(self, msg: Message, sub_id: int, function: int) -> bytes:
-        if msg.sub_id == HIDPP10_ERROR and msg.address == sub_id:
-            code = msg.data[1]
-            if code in (0x04, 0x08):
-                raise DeviceOffline(f"device not connected ({HIDPP10_ERRORS[code]}); wake it by pressing a key or button")
-            raise HIDPPError(code, sub_id, function, self.feature_meta.get(sub_id, (None,))[0])
-        if msg.sub_id == HIDPP20_ERROR and msg.address == sub_id:
-            code = msg.data[1]
-            fid = self.feature_meta.get(sub_id, (None,))[0]
-            raise HIDPPError(code, sub_id, function, fid)
-        return msg.data
+        if msg.sub_id not in (HIDPP10_ERROR, HIDPP20_ERROR) or msg.address != sub_id:
+            return msg.data
+        code = msg.data[1]
+        if msg.sub_id == HIDPP10_ERROR and code in (0x04, 0x08):
+            raise DeviceOffline(f"device not connected ({HIDPP10_ERRORS[code]}); wake it by pressing a key or button")
+        raise HIDPPError(code, sub_id, function, self.feature_meta.get(sub_id, (None,))[0])
 
     def request(self, sub_id: int, function: int, params: bytes = b"", *, timeout: float = 2.0, retries: int = 3) -> bytes:
         address = (function << 4) | self.swid
@@ -198,17 +196,24 @@ class Device:
                 raise
         raise AssertionError("unreachable")
 
+    def _gone(self) -> OSError:
+        return OSError(errno.ENODEV, f"{self.transport.path} is gone (unplugged?)")
+
     def _exchange(self, packet: bytes, sub_id: int, address: int, timeout: float) -> Message | None:
         deadline = time.monotonic() + timeout
+        if self.lost:
+            raise self._gone()
         if self._listener is not None:
             self._reply = None
             self._reply_ready.clear()
             self._waiting = (sub_id, address)
             try:
                 self.transport.write(packet)
-                if self._reply_ready.wait(timeout):
-                    return self._reply
-                return None
+                if not self._reply_ready.wait(timeout):
+                    return None
+                if self.lost:
+                    raise self._gone()
+                return self._reply
             finally:
                 self._waiting = None
         self.transport.write(packet)
@@ -225,10 +230,6 @@ class Device:
             if self._matches(msg, sub_id, address):
                 return msg
             self._dispatch(msg)
-
-    def send_no_reply(self, sub_id: int, function: int, params: bytes = b"") -> None:
-        with self._lock:
-            self.transport.write(self._build(sub_id, (function << 4) | self.swid, params))
 
     # -- notifications -----------------------------------------------------
     def add_handler(self, handler: Callable[[Message], None]) -> None:
@@ -258,7 +259,8 @@ class Device:
                 raw = self.transport.read(0.25)
             except OSError as e:
                 log.warning("reading %s failed: %s", self.transport.path, e)
-                self._stop.set()
+                self.lost = True
+                self._reply_ready.set()  # wake a request waiting for its reply; it sees the reply is missing
                 break
             if raw is None:
                 continue

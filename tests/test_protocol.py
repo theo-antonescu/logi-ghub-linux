@@ -3,7 +3,7 @@ import pytest
 from logi_ghub.hidpp import Device, DeviceOffline, FeatureNotSupported, HIDPPError
 from logi_ghub.hidpp import features as F
 from logi_ghub.hidpp.fake import FakeG502X, FakeTransport
-from logi_ghub.hidpp.transport import _report_ids
+from logi_ghub.hidpp.transport import report_ids
 
 
 def make():
@@ -62,4 +62,37 @@ def test_report_descriptor_ids():
     # vendor collection with short (0x10) and long (0x11) HID++ reports
     desc = bytes.fromhex("06 00 ff 09 01 a1 01 85 10 75 08 95 06 15 00 26 ff 00 09 01 81 00 09 01 91 00 c0"
                          "06 00 ff 09 02 a1 01 85 11 75 08 95 13 09 02 81 00 09 02 91 00 c0")
-    assert _report_ids(desc) == {0x10, 0x11}
+    assert report_ids(desc) == {0x10, 0x11}
+
+
+class UnpluggedTransport(FakeTransport):
+    """Answers until ``unplug()``; then every read fails like a removed hidraw node."""
+
+    gone = False
+
+    def read(self, timeout):
+        if self.gone:
+            raise OSError(19, "No such device")
+        return super().read(timeout)
+
+
+def test_unplugged_device_fails_fast_once_listener_sees_it():
+    import time
+
+    t = UnpluggedTransport(FakeG502X())
+    dev = Device(t)
+    dev.ping()
+    dev.start_listener()
+    try:
+        assert dev.call(F.ADJUSTABLE_DPI, 0x0)  # works through the listener thread
+        t.gone = True
+        deadline = time.monotonic() + 2
+        while not dev.lost and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert dev.lost
+        start = time.monotonic()
+        with pytest.raises(OSError):
+            dev.call(F.ADJUSTABLE_DPI, 0x0)
+        assert time.monotonic() - start < 0.5  # no 2-second timeout
+    finally:
+        dev.close()

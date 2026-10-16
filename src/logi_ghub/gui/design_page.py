@@ -14,7 +14,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from .. import layout, lightfx, presets  # noqa: E402
-from ..design import DIRECTIONS, EFFECTS, Design, Layer, fit_best, from_lighting  # noqa: E402
+from ..design import DIRECTIONS, EFFECTS, Design, Layer, from_lighting  # noqa: E402
 from .editors import confirm  # noqa: E402
 from .keyboard import KeyboardView, int_to_rgba, rgba_to_int  # noqa: E402
 
@@ -516,18 +516,16 @@ class DesignLighting:
             self.toast("Saving to the keyboard…")
 
             def work():
-                frames, period, data, _detail = fit_best(d, self.dev.per_key.zones)
                 anim = getattr(self, "animator", None)
                 if anim:
                     anim.stop()
-                rgb_store.Uploader(self.dev.hidpp).upload(1, data)
-                rgb_store.save_local(self.dev.key, 1, data)
-                return period, rgb_store.parse_file(data), self.dev.rgb.onboard_effect_names()
+                info, period = rgb_store.store_design(self.dev, d, 1)
+                return period, info, self.dev.rgb.onboard_effect_names()
 
             def done(r):
                 period, info, names = r
                 self.onboard_effects = names
-                slower = f" It plays at {period} ms per frame so it fits." if period != FRAME_MS else ""
+                slower = f" It plays at {period} ms per frame so it fits." if period > FRAME_MS else ""
                 self.toast(f"Saved “{info['name']}”. Press brightness + 9 to see it.{slower}")
                 self.build_lighting()
 

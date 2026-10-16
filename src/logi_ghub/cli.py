@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 from . import __version__, keys, profiles
-from .actions import Action, parse_action
-from .device import LogiDevice, find_devices, select_device
+from .actions import parse_action
+from .device import LogiDevice, discover, select_device
 from .features import lighting
 from .features import onboard as ob
 from .hidpp import DeviceOffline, HIDPPError
@@ -19,11 +19,7 @@ from .macros import Macro
 
 
 def _devices(args) -> list[LogiDevice]:
-    if getattr(args, "fake", False):
-        from .hidpp.fake import fake_devices
-
-        return fake_devices()
-    return find_devices()
+    return discover(args.fake)
 
 
 def _device(args) -> LogiDevice:
@@ -259,137 +255,170 @@ def _onboard_set(dev: LogiDevice, memory: ob.OnboardProfiles, args) -> None:
         print(" -", change)
 
 
-def cmd_lighting(args) -> None:
-    dev = _device(args)
-    sub = args.lighting_cmd
-    if sub == "preset":
-        from . import presets
-        from .features import rgb_store
+def _confirm_custom_slot(dev: LogiDevice, args) -> int:
+    """The custom-animation slot (0: brightness + 8, 1: + 9) after the confirmations the command needs."""
+    if not (dev.per_key and dev.has(F.DFU)):
+        raise SystemExit(f"{dev.name} does not support custom animations")
+    slot = getattr(args, "slot", 9)
+    if slot == 8 and not getattr(args, "replace_brightness_8", False):
+        raise SystemExit("brightness + 8 is protected; add --replace-brightness-8 to overwrite it (keep a backup!)")
+    if not args.yes:
+        raise SystemExit(f"this replaces the custom animation on brightness + {slot}; add --yes to confirm")
+    return slot - 8
 
-        from .design import fit_best
 
-        if args.name not in presets.DESIGNS:
-            raise SystemExit("presets: " + ", ".join(presets.DESIGNS))
-        slot = _animation_slot(args)
-        title, make = presets.DESIGNS[args.name]
-        _frames, period, data, _detail = fit_best(make(), dev.per_key.zones)
-        rgb_store.Uploader(dev.hidpp).upload(slot, data, allow_slot0=slot == 0)
-        rgb_store.save_local(dev.key, slot, data)
-        print(f"saved '{title}' to brightness + {8 + slot} ({period} ms per frame)")
-        return
-    if sub == "upload":
-        from .features import rgb_store
+def _lighting_preset(dev: LogiDevice, args) -> None:
+    from . import presets
+    from .features import rgb_store
 
-        slot = _animation_slot(args)
-        data = Path(args.file).read_bytes()
-        info = rgb_store.parse_file(data)
-        rgb_store.Uploader(dev.hidpp).upload(slot, data, allow_slot0=slot == 0)
-        rgb_store.save_local(dev.key, slot, data)
-        print(f"saved '{info['name']}' ({len(info['frames'])} frames) to brightness + {8 + slot}")
-        return
-    if sub == "store":
-        from .features import rgb_store
+    if args.name not in presets.DESIGNS:
+        raise SystemExit("presets: " + ", ".join(presets.DESIGNS))
+    slot = _confirm_custom_slot(dev, args)
+    title, make = presets.DESIGNS[args.name]
+    info, period = rgb_store.store_design(dev, make(), slot)
+    print(f"saved '{info['name']}' to brightness + {8 + slot} ({period} ms per frame)")
 
-        if not args.yes:
-            raise SystemExit("this replaces the custom animation on brightness + 9; add --yes to confirm")
-        prof = profiles.load_profile(dev.key, args.profile)
-        info = rgb_store.store_lighting(dev, prof.lighting, (args.name or prof.name)[:31])
-        print(f"saved '{info['name']}' to brightness + 9 ({len(info['frames'])} frames)")
-        return
-    if sub == "saved":
-        from .features.profile_fs import ProfileFS
 
-        if not dev.has(F.PROFILE_MANAGEMENT):
-            raise SystemExit(f"{dev.name} has no on-board profile storage of this kind")
-        names = dev.rgb.onboard_effect_names() if isinstance(dev.rgb, lighting.RGBEffects) else []
-        fs = ProfileFS(dev.hidpp)
-        onboard, in_use = fs.active()
-        for sp in fs.profiles(0):
-            desc = sp.lighting.describe()
-            if sp.lighting.effect_id == 0x0C and sp.lighting.params[0] < len(names):
-                desc = f"custom animation '{names[sp.lighting.params[0]]}'"
-            mark = " [in use]" if sp.number == in_use else ""
-            print(f"profile {sp.number} {sp.name!r}{mark}: {desc} (power save: {sp.powersave_lighting.describe()})")
-        if not onboard:
-            print("(the computer currently controls the keyboard)")
-        return
-    if sub == "info":
-        rgb = _need(dev.rgb, "lighting", dev)
-        for z in rgb.zones:
-            print(f"zone {z.index} ({z.name}): " + ", ".join(f"{e.name} [{e.effect_id:#04x}]" for e in z.effects))
-        if dev.per_key:
-            print(f"per-key: {len(dev.per_key.zones)} keys")
-        if dev.brightness:
-            print(f"brightness: {dev.brightness.get()} ({dev.brightness.min}-{dev.brightness.max})")
-        return
-    if sub == "brightness":
-        b = _need(dev.brightness, "brightness control", dev)
-        if args.value is None:
-            print(b.get())
-        else:
-            b.set(args.value)
-        return
+def _lighting_upload(dev: LogiDevice, args) -> None:
+    from .features import rgb_store
+
+    slot = _confirm_custom_slot(dev, args)
+    info = rgb_store.store_data(dev, Path(args.file).read_bytes(), slot)
+    print(f"saved '{info['name']}' ({len(info['frames'])} frames) to brightness + {8 + slot}")
+
+
+def _lighting_store(dev: LogiDevice, args) -> None:
+    from .features import rgb_store
+
+    slot = _confirm_custom_slot(dev, args)
+    prof = profiles.load_profile(dev.key, args.profile)
+    info = rgb_store.store_lighting(dev, prof.lighting, (args.name or prof.name)[:31], slot)
+    print(f"saved '{info['name']}' to brightness + {8 + slot} ({len(info['frames'])} frames)")
+
+
+def _lighting_saved(dev: LogiDevice, args) -> None:
+    from .features.profile_fs import ProfileFS
+
+    if not dev.has(F.PROFILE_MANAGEMENT):
+        raise SystemExit(f"{dev.name} has no on-board profile storage of this kind")
+    names = dev.rgb.onboard_effect_names() if isinstance(dev.rgb, lighting.RGBEffects) else []
+    fs = ProfileFS(dev.hidpp)
+    onboard, in_use = fs.active()
+    for sp in fs.profiles(0):
+        desc = sp.lighting.describe()
+        if sp.lighting.effect_id == 0x0C and sp.lighting.params[0] < len(names):
+            desc = f"custom animation '{names[sp.lighting.params[0]]}'"
+        mark = " [in use]" if sp.number == in_use else ""
+        print(f"profile {sp.number} {sp.name!r}{mark}: {desc} (power save: {sp.powersave_lighting.describe()})")
+    if not onboard:
+        print("(the computer currently controls the keyboard)")
+
+
+def _lighting_info(dev: LogiDevice, args) -> None:
     rgb = _need(dev.rgb, "lighting", dev)
-    if sub == "sequence":
-        from . import lightfx
+    for z in rgb.zones:
+        print(f"zone {z.index} ({z.name}): " + ", ".join(f"{e.name} [{e.effect_id:#04x}]" for e in z.effects))
+    if dev.per_key:
+        print(f"per-key: {len(dev.per_key.zones)} keys")
+    if dev.brightness:
+        print(f"brightness: {dev.brightness.get()} ({dev.brightness.min}-{dev.brightness.max})")
 
-        _need(dev.per_key, "per-key lighting", dev)
-        light = {"animation": {"enabled": True, "colors": [_rgb(c) for c in args.colors.split(",")], "step_ms": args.step,
-                               "fade": not args.no_fade, "pattern": args.pattern, "keep_painted": False}}
-        anim = lightfx.apply(dev, light)
-        print("playing; Ctrl+C to stop (to keep it running, save it in a profile and use host mode)")
-        try:
-            while anim.is_alive():
-                anim.join(0.5)
-        except KeyboardInterrupt:
-            anim.stop()
-        return
-    if sub == "release":
-        rgb.release()
-        if dev.onboard:
-            dev.onboard.set_mode(ob.MODE_ONBOARD)
-        print("lighting handed back to the device")
-        return
+
+def _lighting_brightness(dev: LogiDevice, args) -> None:
+    b = _need(dev.brightness, "brightness control", dev)
+    if args.value is None:
+        print(b.get())
+    else:
+        b.set(args.value)
+
+
+def _lighting_sequence(dev: LogiDevice, args) -> None:
+    from . import lightfx
+
+    _need(dev.rgb, "lighting", dev)
+    _need(dev.per_key, "per-key lighting", dev)
+    light = {"animation": {"enabled": True, "colors": [_rgb(c) for c in args.colors.split(",")], "step_ms": args.step,
+                           "fade": not args.no_fade, "pattern": args.pattern, "keep_painted": False}}
+    anim = lightfx.apply(dev, light)
+    print("playing; Ctrl+C to stop (to keep it running, save it in a profile and use host mode)")
+    try:
+        while anim.is_alive():
+            anim.join(0.5)
+    except KeyboardInterrupt:
+        anim.stop()
+
+
+def _lighting_release(dev: LogiDevice, args) -> None:
+    _need(dev.rgb, "lighting", dev).release()
+    if dev.onboard:
+        dev.onboard.set_mode(ob.MODE_ONBOARD)
+    print("lighting handed back to the device")
+
+
+def _claim_lighting(dev: LogiDevice):
+    rgb = _need(dev.rgb, "lighting", dev)
     if dev.onboard and dev.onboard.get_mode() != ob.MODE_HOST:
         dev.onboard.set_mode(ob.MODE_HOST)
-    if hasattr(rgb, "claim"):
-        rgb.claim()
-    if sub == "effect":
-        match = {v[0].lower(): k for k, v in lighting.EFFECTS.items()}
-        name = args.effect.lower()
-        eid = int(name, 0) if name[:1].isdigit() else match.get(name)
-        if eid is None:
-            raise SystemExit(f"unknown effect {args.effect!r}")
-        eff = lighting.Effect(eid)
-        if args.color:
-            eff.color = _rgb(args.color)
-        if args.period:
-            eff.period = args.period
-        if args.brightness is not None:
-            eff.intensity = args.brightness
-        zones = range(len(rgb.zones)) if args.zone is None else [args.zone]
-        for z in zones:
-            if rgb.zones[z].effect_by_id(eid):
-                rgb.set_effect(z, eff)
-                print(f"zone {z}: {eff.name}")
-    elif sub == "keys":
-        pk = _need(dev.per_key, "per-key lighting", dev)
-        if args.all:
-            rgb.hold_static(_rgb(args.all))
-            pk.fill(_rgb(args.all))
-        colors = {}
-        from .macros import resolve_key
+    rgb.claim()
+    return rgb
 
-        for spec in args.key or []:
-            k, _, c = spec.partition("=")
-            zone = lighting.SPECIAL_ZONES.get(k) or lighting.zone_for_hid(keys.hid_for(resolve_key(k)))
-            if zone is None:
-                raise SystemExit(f"no lighting zone for {k}")
-            colors[zone] = _rgb(c)
-        if colors:
-            pk.set_colors(colors)
-        print("per-key colours set")
-    print("Note: the device returns to its on-board lighting when the daemon is not running and it wakes from sleep.")
+
+LIGHTING_NOTE = "Note: the device returns to its on-board lighting when the daemon is not running and it wakes from sleep."
+
+
+def _lighting_effect(dev: LogiDevice, args) -> None:
+    rgb = _claim_lighting(dev)
+    match = {v[0].lower(): k for k, v in lighting.EFFECTS.items()}
+    name = args.effect.lower()
+    eid = int(name, 0) if name[:1].isdigit() else match.get(name)
+    if eid is None:
+        raise SystemExit(f"unknown effect {args.effect!r}")
+    eff = lighting.Effect(eid)
+    if args.color:
+        eff.color = _rgb(args.color)
+    if args.period:
+        eff.period = args.period
+    if args.brightness is not None:
+        eff.intensity = args.brightness
+    zones = range(len(rgb.zones)) if args.zone is None else [args.zone]
+    for z in zones:
+        if rgb.zones[z].effect_by_id(eid):
+            rgb.set_effect(z, eff)
+            print(f"zone {z}: {eff.name}")
+    print(LIGHTING_NOTE)
+
+
+def _lighting_keys(dev: LogiDevice, args) -> None:
+    from .macros import resolve_key
+
+    rgb = _claim_lighting(dev)
+    pk = _need(dev.per_key, "per-key lighting", dev)
+    if args.all:
+        rgb.hold_static(_rgb(args.all))
+        pk.fill(_rgb(args.all))
+    colors = {}
+    for spec in args.key or []:
+        k, _, c = spec.partition("=")
+        zone = lighting.SPECIAL_ZONES.get(k) or lighting.zone_for_hid(keys.hid_for(resolve_key(k)))
+        if zone is None:
+            raise SystemExit(f"no lighting zone for {k}")
+        colors[zone] = _rgb(c)
+    if colors:
+        pk.set_colors(colors)
+    print("per-key colours set")
+    print(LIGHTING_NOTE)
+
+
+LIGHTING_COMMANDS = {
+    "preset": _lighting_preset, "upload": _lighting_upload, "store": _lighting_store, "saved": _lighting_saved,
+    "info": _lighting_info,
+    "brightness": _lighting_brightness, "sequence": _lighting_sequence, "release": _lighting_release,
+    "effect": _lighting_effect, "keys": _lighting_keys,
+}
+
+
+def cmd_lighting(args) -> None:
+    LIGHTING_COMMANDS[args.lighting_cmd](_device(args), args)
 
 
 def cmd_profile(args) -> None:
@@ -445,7 +474,7 @@ def cmd_sync(args) -> int:
     t0 = time.monotonic()
     anim = dev = None
     if not args.no_keyboard:
-        dev = select_device(_devices(args), args.device)
+        dev = _device(args)
         anim = lightfx.apply(dev, {"design": design.to_dict()})
         t0 = anim.start_time if anim is not None else t0
     case = CaseLights(design, t0)
@@ -480,15 +509,6 @@ def cmd_sync(args) -> int:
         anim.stop()
         dev.rgb.release()
     return 0
-
-
-def _animation_slot(args) -> int:
-    """Slot number (0 or 1) for brightness + 8 / + 9, after the confirmations the command needs."""
-    if args.slot == 8 and not args.replace_brightness_8:
-        raise SystemExit("brightness + 8 is protected; add --replace-brightness-8 to overwrite it (keep a backup!)")
-    if not args.yes:
-        raise SystemExit(f"this replaces the custom animation on brightness + {args.slot}; add --yes to confirm")
-    return args.slot - 8
 
 
 def main(argv: list[str] | None = None) -> int:

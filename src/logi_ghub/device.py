@@ -39,20 +39,69 @@ MODELS: dict[str, Model] = {
 }
 
 
-class LogiDevice:
+class BaseDevice:
+    """What the app, CLI, tray and daemon use of a device. Subclasses provide the parts their hardware has;
+    a part a device lacks stays None."""
+
+    kind = "device"
+    hidpp: Device | None = None
+    onboard = dpi = report_rate = rgb = per_key = brightness = button_spy = gkeys = None
+
     def __init__(self, info: HidrawInfo):
         self.info = info
-        self.hidpp: Device | None = None
         self.name = info.name
-        self.kind = MODELS.get(info.key, Model(info.name, "device")).kind
         self.online = False
         self.error: str | None = None
-        self.unit_id: int | None = None
         self.model_ids: list[int] = []
 
     @property
     def key(self) -> str:
-        """Model id used for profiles: the wireless product id, also when the device is plugged in by USB."""
+        """Model id used for profiles, e.g. ``046d:409f``."""
+        return self.info.key
+
+    def open(self) -> "BaseDevice":
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+    def has(self, feature_id: int) -> bool:
+        return self.hidpp is not None and feature_id in self.hidpp.features
+
+    def battery(self) -> basic.Battery | None:
+        return None
+
+    def firmware(self) -> list[basic.Firmware]:
+        return []
+
+    def button_names(self) -> list[str]:
+        return []
+
+    def button_name(self, index: int) -> str:
+        names = self.button_names()
+        return names[index] if index < len(names) else f"Button {index + 1}"
+
+    def binding_count(self) -> int:
+        return 0
+
+    def describe(self) -> dict:
+        out = {"name": self.name, "model": self.key, "path": self.info.path, "kind": self.kind, "online": self.online}
+        if not self.online:
+            out["error"] = self.error
+        return out
+
+
+class LogiDevice(BaseDevice):
+    """A HID++ 2.0 device."""
+
+    def __init__(self, info: HidrawInfo):
+        super().__init__(info)
+        self.kind = MODELS.get(info.key, Model(info.name, "device")).kind
+        self.unit_id: int | None = None
+
+    @property
+    def key(self) -> str:
+        """The wireless product id, also when the device is plugged in by USB."""
         if self.model_ids:
             return f"{self.info.vid:04x}:{self.model_ids[0]:04x}"
         return self.info.key
@@ -62,8 +111,11 @@ class LogiDevice:
         return MODELS.get(self.key, Model(self.name, self.kind))
 
     def open(self) -> "LogiDevice":
-        transport = HidrawTransport(self.info.path)
-        self.hidpp = Device(transport, short_ok=self.info.supports_short)
+        return self.attach(Device(HidrawTransport(self.info.path), short_ok=self.info.supports_short))
+
+    def attach(self, hidpp: Device) -> "LogiDevice":
+        """Talk to the device through ``hidpp``: learn its features, name and model."""
+        self.hidpp = hidpp
         try:
             self.hidpp.ping()
             self.hidpp.discover_features()
@@ -74,10 +126,7 @@ class LogiDevice:
             except (HIDPPError, FeatureNotSupported):
                 pass
             self.online = True
-        except DeviceOffline as e:
-            self.error = str(e)
-            self.online = False
-        except (TimeoutError, HIDPPError, OSError) as e:
+        except (DeviceOffline, TimeoutError, HIDPPError, OSError) as e:
             self.error = str(e)
             self.online = False
         return self
@@ -86,9 +135,6 @@ class LogiDevice:
         if self.hidpp:
             self.hidpp.close()
             self.hidpp = None
-
-    def has(self, feature_id: int) -> bool:
-        return bool(self.hidpp) and feature_id in self.hidpp.features
 
     def _maybe(self, feature_id: int, factory):
         if not self.has(feature_id):
@@ -149,9 +195,8 @@ class LogiDevice:
         except (HIDPPError, FeatureNotSupported, TimeoutError):
             return []
 
-    def button_name(self, index: int) -> str:
-        names = self.model.buttons
-        return names[index] if index < len(names) else f"Button {index + 1}"
+    def button_names(self) -> list[str]:
+        return self.model.buttons
 
     def binding_count(self) -> int:
         """How many binding slots to show: physical buttons, plus wheel slots the factory profile fills."""
@@ -160,15 +205,8 @@ class LogiDevice:
         return max(self.onboard.info.button_count, len(self.model.buttons))
 
     def describe(self) -> dict:
-        out = {
-            "name": self.name,
-            "model": self.key,
-            "path": self.info.path,
-            "kind": self.kind,
-            "online": self.online,
-        }
+        out = super().describe()
         if not self.online:
-            out["error"] = self.error
             return out
         out["protocol"] = "%d.%d" % self.hidpp.protocol
         out["features"] = {F.short_name(fid): idx for fid, idx in sorted(self.hidpp.features.items(), key=lambda x: x[1])}
@@ -179,7 +217,16 @@ class LogiDevice:
         return out
 
 
-def find_devices(open_them: bool = True) -> list[LogiDevice]:
+def discover(fake: bool = False) -> list[BaseDevice]:
+    """The connected devices, opened; ``fake`` gives the simulated ones instead (``--fake``)."""
+    if fake:
+        from .hidpp.fake import fake_devices
+
+        return fake_devices()
+    return find_devices()
+
+
+def find_devices(open_them: bool = True) -> list[BaseDevice]:
     from .features.g600 import G600Device, enumerate_g600
 
     devs = [LogiDevice(i) for i in enumerate_hidpp()] + [G600Device(i) for i in enumerate_g600()]
@@ -198,7 +245,7 @@ def find_devices(open_them: bool = True) -> list[LogiDevice]:
     return devs
 
 
-def select_device(devs: list[LogiDevice], selector: str | None) -> LogiDevice:
+def select_device(devs: list[BaseDevice], selector: str | None) -> BaseDevice:
     """Pick a device by model key, hidraw path, kind or a substring of its name."""
     if not devs:
         raise LookupError("no Logitech HID++ devices found (is the udev rule installed?)")

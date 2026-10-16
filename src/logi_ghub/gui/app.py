@@ -18,14 +18,15 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from .. import __version__, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
-from ..device import LogiDevice, find_devices  # noqa: E402
+from ..autostart import daemon_running  # noqa: E402
+from ..device import LogiDevice, discover  # noqa: E402
 from ..features import lighting  # noqa: E402
 from ..hidpp import features as F  # noqa: E402
 from ..features import onboard as ob  # noqa: E402
 from ..macros import Macro  # noqa: E402
 from .editors import ActionDialog, MacroDialog, confirm  # noqa: E402
 from .design_page import DesignLighting  # noqa: E402
-from .keyboard import int_to_rgba, rgba_to_int  # noqa: E402
+from .keyboard import KeyboardView, int_to_rgba, rgba_to_int  # noqa: E402
 
 log = logging.getLogger(__name__)
 APP_ID = "io.github.theo_antonescu.LogiGhubLinux"
@@ -54,20 +55,6 @@ def run_async(fn, done=None, error=None):
     threading.Thread(target=work, daemon=True).start()
 
 
-def daemon_running() -> bool:
-    for pid in os.listdir("/proc"):
-        if not pid.isdigit():
-            continue
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                cmd = f.read().replace(b"\0", b" ")
-        except OSError:
-            continue
-        if b"logi-ghubd" in cmd or b"logi_ghub.daemon" in cmd or b"logi-ghub-cli daemon" in cmd:
-            return True
-    return False
-
-
 def _clear(group_box: Gtk.Box):
     child = group_box.get_first_child()
     while child:
@@ -94,9 +81,17 @@ class DevicePane(Gtk.Box, DesignLighting):
         self.onboard_effects: list[str] = []
         self.stored_profiles = []
         self.stored_active: int | None = None
-        self.animator = None
+        self.animator: lightfx.Animator | None = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
+        self.mode = 0
+        self.info: dict = {}
+        self.kb_view: KeyboardView | None = None
+        self.renderer: lightfx.Renderer | None = None
+        self._t0 = 0.0
+        self._preview_source: int | None = None  # GLib timer redrawing the preview
+        self._apply_pending: int | None = None  # GLib timer sending the lighting to the device
+        self._claimed = False  # this pane took the lighting over from the keyboard
 
         self.banner = Adw.Banner(button_label="Save")
         self.banner.connect("button-clicked", lambda *_: self.save())
@@ -517,7 +512,7 @@ class DevicePane(Gtk.Box, DesignLighting):
         p = self.profile
         lo, hi = (self.dpi_values[0], self.dpi_values[-1]) if self.dpi_values else (100, 25600)
         step = (self.dpi_values[1] - self.dpi_values[0]) if len(self.dpi_values) > 1 else 50
-        max_stages = 4 if self.slots and hasattr(self.slots[0], "max_dpi_stages") else 5
+        max_stages = self.slots[0].max_dpi_stages if self.slots else 5
         g = self.add_group("dpi", Adw.PreferencesGroup(title="DPI stages", description=f"Up to {max_stages} stages, {lo}–{hi} DPI. "
                                                        "The DPI buttons step through these."))
         add = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Add a stage", sensitive=len(p.dpi_stages) < max_stages)
@@ -771,11 +766,10 @@ class DevicePane(Gtk.Box, DesignLighting):
             duration.set_sensitive(not is_off and led["effect"] != 0)
             self.mark_dirty()
 
-        changed_quiet = changed
         color_row.set_sensitive(not off)
         duration.set_sensitive(not off and led.get("effect", 0) != 0)
         for w, sig in ((combo, "notify::selected"), (color_btn, "notify::rgba"), (duration, "notify::value"), (gshift_btn, "notify::rgba")):
-            w.connect(sig, changed_quiet)
+            w.connect(sig, changed)
 
     def _lighting_state_text(self) -> str:
         """For devices with lighting zones only (mice); keyboards with per-key lighting use the design page."""
@@ -845,9 +839,8 @@ class DevicePane(Gtk.Box, DesignLighting):
 
     # preview and live application
     def _stop_preview(self):
-        src = getattr(self, "_preview_source", None)
-        if src:
-            GLib.source_remove(src)
+        if self._preview_source:
+            GLib.source_remove(self._preview_source)
             self._preview_source = None
 
     def lighting_changed(self, dirty: bool = True):
@@ -869,12 +862,11 @@ class DevicePane(Gtk.Box, DesignLighting):
         dev = self.dev
 
         def work():
-            old = getattr(self, "animator", None)
+            old = self.animator
             if old:
                 old.stop()
                 old.join(timeout=1)
-            claimed = getattr(self, "_claimed", False)
-            anim = lightfx.apply(dev, light, claim=not claimed)
+            anim = lightfx.apply(dev, light, claim=not self._claimed)
             self._claimed = True
             return anim
 
@@ -887,9 +879,8 @@ class DevicePane(Gtk.Box, DesignLighting):
         run_async(lambda: self.dev.brightness.set(value), None, self.fail)
 
     def stop_lighting(self):
-        anim = getattr(self, "animator", None)
-        if anim:
-            anim.stop()
+        if self.animator:
+            self.animator.stop()
             self.animator = None
         self._stop_preview()
 
@@ -1017,14 +1008,7 @@ class MainWindow(Adw.ApplicationWindow):
             d.close()
         self.panes.clear()
 
-        def find():
-            if self.fake:
-                from ..hidpp.fake import fake_devices
-
-                return fake_devices()
-            return find_devices()
-
-        run_async(find, self.found, lambda e: self.toast(f"Error: {e}"))
+        run_async(lambda: discover(self.fake), self.found, lambda e: self.toast(f"Error: {e}"))
 
     def found(self, devices: list[LogiDevice]):
         self.devices = devices
@@ -1057,7 +1041,7 @@ class MainWindow(Adw.ApplicationWindow):
     def on_select(self, _list, row):
         if row is None:
             return
-        dev: LogiDevice = row.get_child().dev if not hasattr(row, "dev") else row.dev
+        dev: LogiDevice = row.dev
         if not dev.online:
             self.status.set_title(f"{dev.name} is not reachable")
             self.status.set_description(dev.error or "")
