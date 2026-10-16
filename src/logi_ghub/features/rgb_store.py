@@ -41,6 +41,7 @@ from ..hidpp import features as F
 log = logging.getLogger(__name__)
 
 FILE_SIZE = 12320  # what is transferred: the animation padded to 12304 bytes, then a 16-byte trailer
+LARGE_FILE_SIZE = 19488  # the largest file G HUB has been seen storing (its "Contrastic" effect)
 BODY_SIZE = FILE_SIZE - 16
 TRAILER = b"\x03" + bytes(15)  # G HUB ends every upload with this packet; without it the keyboard refuses the file
 HEADER_SIZE = 0x4B

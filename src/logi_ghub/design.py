@@ -255,12 +255,14 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
             wave = round(wave * 3) / 3
         flag = scale(base, layer.floor + (1 - layer.floor) * wave)
         steps = (lambda k: round(k * 3) / 3) if layer.flags else (lambda k: k)
-        if phase < 0.45:  # rising: each row fades in as the top edge of the flag passes it
+        # share of each cycle spent rising and fading; alternating flags stay up longer
+        rise, fade = (0.2, 0.08) if layer.flags else (0.45, 0.15)
+        if phase < rise:  # rising: each row fades in as the top edge of the flag passes it
             soft = 0.3
-            edge = phase / 0.45 * (1 + soft)
+            edge = phase / rise * (1 + soft)
             return lerp(sky, flag, steps(min(1.0, max(0.0, (edge - height) / soft))))
-        if phase > 0.85:  # fading back into the sky
-            return lerp(flag, sky, steps((phase - 0.85) / 0.15))
+        if phase > 1 - fade:  # fading back into the sky
+            return lerp(flag, sky, steps((phase - (1 - fade)) / fade))
         return flag
     return base
 
@@ -436,13 +438,14 @@ def fit_frames(design: Design, zones: list[int], periods=(48, 50, 60, 72, 75, 80
 
     r = design.renderer(zones)
     last = None
+    sizes = [max_size] if max_size else [rgb_store.FILE_SIZE, rgb_store.LARGE_FILE_SIZE]
     for p in periods:
         frames = r.frames(p)
-        try:
-            return frames, p, rgb_store.build_file(design.name[:31], frames, period_ms=p,
-                                                   max_size=max_size or rgb_store.FILE_SIZE)
-        except ValueError as e:
-            last = e
+        for size in sizes:  # a bigger file before a jerkier animation
+            try:
+                return frames, p, rgb_store.build_file(design.name[:31], frames, period_ms=p, max_size=size)
+            except ValueError as e:
+                last = e
     raise ValueError(f"“{design.name}” has too much movement to store on the keyboard ({last}); "
                      "use fewer animated keys or slower effects")
 

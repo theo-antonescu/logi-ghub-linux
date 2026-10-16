@@ -100,4 +100,4 @@ def test_raising_flags_alternate_countries():
     assert ro[z("Insert")] & 0xFF > 0x80 and ro[z("PageUp")] >> 16 > 0x80  # blue left, red right
     assert ca[z("Insert")] >> 16 > 0x80 and ca[z("Home")] >> 16 > 0x80 and ca[z("Home")] & 0xFF < 0x40  # leaf red
     assert ca[z("ScrollLock")] & 0xFF > 0x60  # white middle column
-    assert layer.cycle_ms == 12000
+    assert layer.cycle_ms == 12000  # 6 s per flag here
