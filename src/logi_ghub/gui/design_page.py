@@ -115,6 +115,10 @@ class DesignLighting:
             b = Gtk.Button(label=title, css_classes=["flat"])
             b.connect("clicked", lambda _b, k=key: (popover.popdown(), self._start_from(k)))
             choices.append(b)
+        anim = Gtk.Button(label="New animation…", tooltip_text="Add a layer you paint frame by frame",
+                          valign=Gtk.Align.CENTER)
+        anim.connect("clicked", lambda *_: self._new_animation())
+        hb.append(anim)
         hb.append(Gtk.MenuButton(label="Start from…", popover=popover, valign=Gtk.Align.CENTER,
                                  tooltip_text="Replace the layers with a ready-made design"))
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a layer", valign=Gtk.Align.CENTER)
@@ -224,6 +228,12 @@ class DesignLighting:
         bg_row.add_suffix(bg_btn)
         bg_row.add_suffix(bg_dark)
         row.add_row(bg_row)
+        frames_row = Adw.ActionRow(title="Frames")
+        edit_frames = Gtk.Button(label="Edit frames…", valign=Gtk.Align.CENTER)
+        edit_frames.add_css_class("suggested-action")
+        edit_frames.connect("clicked", lambda *_: self._edit_frames(layer))
+        frames_row.add_suffix(edit_frames)
+        row.add_row(frames_row)
 
         def rebuild_colors():
             while (child := colors_box.get_first_child()) is not None:
@@ -242,15 +252,19 @@ class DesignLighting:
 
         def sync():
             e = layer.effect
-            colors_row.set_visible(e != "rainbow")
-            speed.set_visible(e != "static")
+            frames_row.set_visible(e == "frames")
+            frames_row.set_subtitle(f"{len(layer.frames)} frame{'s' if len(layer.frames) != 1 else ''}, "
+                                    f"{layer.cycle_ms / 1000:.2f} s per loop" if layer.frames else "No frames yet")
+            keys_btn.set_visible(e != "frames")  # frames say for themselves which keys they light
+            colors_row.set_visible(e not in ("rainbow", "frames"))
+            speed.set_visible(e not in ("static", "frames"))
             bg_row.set_visible(e in ("raise", "sparkle"))
             spread.set_visible(e in ("comet", "sparkle") or (e in ("sequence", "ripple", "rainbow") and layer.direction != "none"))
             spread.set_title({"comet": "Tail length", "sparkle": "How many keys sparkle"}.get(e, "Wave length"))
             spread.set_subtitle({"comet": "Part of the circle the tail covers", "sparkle": "Share of the keys flashing at a time"}
                                 .get(e, "How far apart in the cycle the first and last keys are"))
             floor.set_visible(e in ("ripple", "breathing", "comet", "sparkle", "heartbeat", "raise"))
-            direction.set_visible(e not in ("static", "pinwheel", "comet", "turning"))
+            direction.set_visible(e not in ("static", "pinwheel", "comet", "turning", "frames"))
             fade.set_visible(e == "sequence")
             if e in ("static", "breathing") and len(layer.colors) > 1:
                 del layer.colors[1:]
@@ -282,9 +296,30 @@ class DesignLighting:
     @staticmethod
     def _layer_summary(layer: Layer) -> str:
         what = EFFECTS.get(layer.effect, layer.effect)
+        if layer.effect == "frames":
+            n = len(layer.frame_keys)
+            return f"{what} · {len(layer.frames)} frames · {n} key{'s' if n != 1 else ''}"
         if layer.effect != "static":
             what += f", {layer.period_ms / 1000:g} s"
         return f"{what} · {len(layer.keys)} key{'s' if len(layer.keys) != 1 else ''}"
+
+    def _edit_frames(self, layer: Layer):
+        from .frame_editor import FrameEditor
+
+        def saved(name, frames, cycle):
+            layer.name, layer.frames, layer.cycle = name, frames, cycle
+            self._design_changed(layers_changed=True)
+
+        FrameEditor(layer.name, layer.frames, layer.cycle, self.dev.per_key.zones, saved).present(self.win)
+
+    def _new_animation(self):
+        """A layer you paint frame by frame, opened straight in the frame editor."""
+        layer = Layer(f"Animation {len(self.design.layers) + 1}", [], "frames")
+        self.design.layers.append(layer)
+        self.open_layer = len(self.design.layers) - 1
+        self.keys_layer = None
+        self._design_changed(layers_changed=True)
+        self._edit_frames(layer)
 
     def _add_layer(self):
         self.design.layers.append(Layer(f"Layer {len(self.design.layers) + 1}", [], "static", [self.paint_color]))

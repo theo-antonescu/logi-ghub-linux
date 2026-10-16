@@ -62,3 +62,17 @@ def test_flag_effects_use_the_flag_colours_and_loop():
         assert all(r.frame(0.7)[z] == r.frame(3.7)[z] for z in zones), effect  # same every loop
     pin = design.Design("t", [design.Layer("f", keys, "pinwheel", flag, 3000)]).renderer(ZONES)
     assert set(pin.frame(0.4).values()) - {0} <= set(flag)
+
+
+def test_frames_play_in_order_with_their_transitions():
+    frames = [{"colors": {"A": 0xFF0000}, "ms": 400, "transition": "linear"},
+              {"colors": {"A": 0x0000FF, "B": 0x00FF00}, "ms": 400, "transition": "cut"}]
+    d = design.Design("t", [design.Layer("f", [], "frames", frames=frames)])
+    r = d.renderer(ZONES)
+    a, b = layout.zone_of("A"), layout.zone_of("B")
+    assert r.frame(0.0)[a] == 0xFF0000 and r.frame(0.0)[b] == 0
+    assert r.frame(0.2)[a] == design.lerp(0xFF0000, 0x0000FF, 0.5)  # half way, linear
+    assert r.frame(0.6)[a] == 0x0000FF  # cut: holds until the next frame
+    assert d.loop_ms() == 800 and design.Design.from_dict(d.to_dict()) == d
+    bounce = design.Layer("f", [], "frames", frames=frames * 2, cycle="bounce")
+    assert [c for c, _ms, _t in bounce.timeline()][4] == frames[0]["colors"]  # 1 2 3 4 3 2

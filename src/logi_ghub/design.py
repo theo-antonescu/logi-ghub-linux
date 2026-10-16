@@ -43,6 +43,16 @@ EFFECTS = {
     "heartbeat": "Heartbeat",
     "raise": "Raise the flag",
     "flags": "Flags (whole keyboard, in turn)",
+    "frames": "Frames (paint each frame)",
+}
+# How a frame turns into the next one (G HUB's transition curves)
+TRANSITIONS = {
+    "cut": ("Cut", lambda p: 0.0),
+    "linear": ("Linear", lambda p: p),
+    "ease_in": ("Ease in", lambda p: p * p),
+    "ease_out": ("Ease out", lambda p: 1 - (1 - p) ** 2),
+    "ease_in_out": ("Ease in and out", lambda p: 3 * p * p - 2 * p ** 3),
+    "late": ("Hold, then change", lambda p: max(0.0, (p - 0.7) / 0.3)),
 }
 STRIPED = {"ripple", "sparkle", "heartbeat", "raise"}  # effects that lay the colours out as stripes
 DIRECTIONS = {
@@ -88,11 +98,16 @@ class Layer:
     spread: float = 0.5  # sequence/ripple/rainbow: how far apart in the cycle the first and last keys are
     background: int | None = None  # raise/sparkle: what keys show where the effect isn't lit (None = dark)
     flags: list[str] = field(default_factory=list)  # flags effect: the flags shown in turn (keys of FLAGS)
+    # frames effect: [{"colors": {key name: colour}, "ms": time shown, "transition": TRANSITIONS key}]
+    frames: list[dict] = field(default_factory=list)
+    cycle: str = "loop"  # frames effect: "loop" (1, 2, 3, 1, 2, 3) or "bounce" (1, 2, 3, 2, 1, 2, 3)
 
     def to_dict(self) -> dict:
         return {"name": self.name, "keys": list(self.keys), "effect": self.effect, "colors": [int(c) for c in self.colors],
                 "period_ms": self.period_ms, "direction": self.direction, "fade": self.fade, "floor": self.floor,
-                "spread": self.spread, "background": self.background, "flags": list(self.flags)}
+                "spread": self.spread, "background": self.background, "flags": list(self.flags),
+                "frames": [{"colors": dict(f.get("colors", {})), "ms": int(f.get("ms", 370)),
+                            "transition": f.get("transition", "linear")} for f in self.frames], "cycle": self.cycle}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Layer":
@@ -101,17 +116,35 @@ class Layer:
                    period_ms=int(d.get("period_ms", 2000)), direction=d.get("direction", "none"),
                    fade=bool(d.get("fade", True)), floor=float(d.get("floor", 0.3)), spread=float(d.get("spread", 0.5)),
                    background=None if d.get("background") is None else int(d["background"]),
-                   flags=list(d.get("flags", [])))
+                   flags=list(d.get("flags", [])),
+                   frames=[{"colors": {k: int(v) for k, v in f.get("colors", {}).items()}, "ms": int(f.get("ms", 370)),
+                            "transition": f.get("transition", "linear")} for f in d.get("frames", [])],
+                   cycle=d.get("cycle", "loop"))
 
     @property
     def animated(self) -> bool:
+        if self.effect == "frames":
+            return len(self.frames) > 1
         return self.effect != "static" and not (self.effect == "sequence" and len(self.colors) < 2)
 
     @property
     def cycle_ms(self) -> int:
-        """Time until the layer repeats: one period, or one period per flag for the flags effect."""
+        """Time until the layer repeats: one period, one per flag (flags) or the frames' total (frames)."""
+        if self.effect == "frames":
+            return max(50, sum(ms for _c, ms, _tr in self.timeline()))
         n = max(1, len(self.flags)) if self.effect == "flags" else 1
         return max(50, self.period_ms) * n
+
+    def timeline(self) -> list[tuple[dict, int, str]]:
+        """frames effect: (colours, ms, transition) in playing order, with bounce unfolded."""
+        seq = [(f.get("colors", {}), max(20, int(f.get("ms", 370))), f.get("transition", "linear")) for f in self.frames]
+        if self.cycle == "bounce" and len(seq) > 2:
+            seq = seq + seq[-2:0:-1]
+        return seq
+
+    @property
+    def frame_keys(self) -> list[str]:
+        return sorted({k for f in self.frames for k in f.get("colors", {})})
 
 
 @dataclass
@@ -278,6 +311,21 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float) -> int:
     return scale(current(fx, fy), level)
 
 
+def _frames_effect(layer: "Layer", name: str, t: float) -> int:
+    seq = layer.timeline()
+    if not seq:
+        return 0
+    total = sum(ms for _c, ms, _tr in seq)
+    pos = (t * 1000) % total
+    for i, (colors, ms, transition) in enumerate(seq):
+        if pos < ms or i == len(seq) - 1:
+            nxt = seq[(i + 1) % len(seq)][0]
+            ease = TRANSITIONS.get(transition, TRANSITIONS["linear"])[1]
+            return lerp(colors.get(name, 0), nxt.get(name, 0), ease(min(1.0, pos / ms)))
+        pos -= ms
+    return 0
+
+
 class DesignRenderer:
     """Colours of every key of a design at a point in time."""
 
@@ -287,10 +335,12 @@ class DesignRenderer:
         by_name = {c.name: c for c in caps}
         self.layers = []
         for layer in design.layers:
-            mine = [by_name[k] for k in layer.keys if k in by_name]
+            names = layer.frame_keys if layer.effect == "frames" else layer.keys
+            mine = [by_name[k] for k in names if k in by_name]
             pos = _positions(mine)
             self.layers.append((layer, [(c.zone, *pos[c.name]) for c in mine]))
         self.zones = [c.zone for c in caps]
+        self.names = {c.zone: c.name for c in caps}
 
     def frame(self, t: float) -> dict[int, int]:
         """``t`` in seconds."""
@@ -321,6 +371,8 @@ class DesignRenderer:
                     c = scale(colors[0], layer.floor + (1 - layer.floor) * level)
                 elif layer.effect == "flags":
                     c = _flags_effect(layer, fx, fy, t)
+                elif layer.effect == "frames":
+                    c = _frames_effect(layer, self.names[zone], t)
                 elif layer.effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):
                     c = _shape_effect(layer, colors, zone, fx, fy, cycle)
                 else:
