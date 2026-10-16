@@ -447,21 +447,21 @@ def _ceremony(layer: "Layer", colors: list[int], zone: int, fx: float, fy: float
 
 
 def _scanner(layer: "Layer", colors: list[int], fx: float, t: float) -> int:
-    """A bright head sweeping back and forth, leaving a trail that cools through the colours."""
+    """A soft glow gliding back and forth (easing at each end), leaving a long trail that cools through
+    the colours."""
     per = max(50, layer.period_ms) / 1000
     phase = (t / per) % 1.0
-    head = phase * 2 if phase < 0.5 else 2 - phase * 2  # 0 -> 1 -> 0
+    head = 0.5 - 0.5 * math.cos(2 * math.pi * phase)  # 0 -> 1 -> 0, slowing down at the ends
     moving_right = phase < 0.5
     behind = (head - fx) if moving_right else (fx - head)
     width = max(0.1, layer.spread)
     dim = scale(colors[-1], layer.floor * 0.4)
-    if behind < -0.08:  # ahead of the head
-        return dim
-    if behind < 0.08:  # the head itself: white hot
-        return lerp(0xFFFFFF, colors[0], max(0.0, behind) / 0.08)
-    part = min(1.0, (behind - 0.08) / width)
-    if part >= 1:
-        return dim
+    glow = 0.12
+    if behind < 0:  # ahead of the head: a soft leading edge
+        return lerp(lerp(0xFFFFFF, colors[0], 0.5), dim, min(1.0, -behind / glow))
+    if behind < glow:  # the head: warm white into the first colour
+        return lerp(lerp(0xFFFFFF, colors[0], 0.5), colors[0], behind / glow)
+    part = min(1.0, (behind - glow) / width)
     k = part * (len(colors) - 1)
     i = int(k)
     c = lerp(colors[i], colors[min(i + 1, len(colors) - 1)], k - i)

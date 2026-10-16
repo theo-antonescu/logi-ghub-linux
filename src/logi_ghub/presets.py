@@ -44,12 +44,12 @@ def python_romania_design() -> Design:
     """Python-theme keys. On the block right of the main keys (PrtSc to the arrows) a Romanian flag
     ceremony plays: the flag is raised row by row out of a light blue sky, flutters in the wind, is
     lowered, and fireworks in its colours burst over the sky. Across the logo, brightness and music
-    keys a white-hot head sweeps back and forth, its trail cooling through blue, yellow and red."""
+    keys a soft glow glides slowly back and forth, its long trail cooling through blue, yellow and red."""
     layers = [Layer(name, keys, "static", [colour]) for name, keys, colour in _python_groups()]
     layers.append(Layer("Romanian flag ceremony", [k for col in NAV_COLUMNS for k in col], "ceremony",
                         [RO_BLUE, RO_YELLOW, RO_RED], period_ms=18000, floor=0.55, background=SKY))
     layers.append(Layer("Logo and music keys", ["Logo", "Brightness", "Previous", "Play/Pause", "Next", "Mute"], "scanner",
-                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=3000, floor=0.35, spread=0.7))
+                        [RO_BLUE, RO_YELLOW, RO_RED], period_ms=9000, floor=0.35, spread=1.0))
     return Design("Python + Romania", layers)
 
 
