@@ -207,11 +207,12 @@ class Animator(threading.Thread):
         # Rounding only matters while colours fade; stepped sequences keep the exact colours chosen.
         self.quant_bits = quant_bits or (8 if not anim.get("fade", True) else (4 if wave else 6))
         self.last: dict[int, int] = {}
+        self.start_time = time.monotonic()  # shared with other players to stay in step
 
     def run(self) -> None:
         pk = self.dev.per_key
         zones = set(pk.zones)
-        start = time.monotonic()
+        start = self.start_time
         failures = 0
         while not self.stop_event.is_set():
             t0 = time.monotonic()

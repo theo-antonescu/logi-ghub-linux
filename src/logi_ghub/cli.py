@@ -432,6 +432,37 @@ def cmd_profile(args) -> None:
             print(f"daemon will run '{args.name}' in host mode on {dev.name}")
 
 
+def cmd_sync(args) -> int:
+    """Play one design on the keyboard (live) and on every OpenRGB device, from the same start time."""
+    import time
+
+    from . import lightfx, presets
+    from .caselight import CaseLights
+
+    if args.design not in presets.DESIGNS:
+        raise SystemExit("designs: " + ", ".join(presets.DESIGNS))
+    design = presets.DESIGNS[args.design][1]()
+    t0 = time.monotonic()
+    anim = dev = None
+    if not args.no_keyboard:
+        dev = select_device(_devices(args), args.device)
+        anim = lightfx.apply(dev, {"design": design.to_dict()})
+        t0 = anim.start_time if anim is not None else t0
+    case = CaseLights(design, t0)
+    case.start()
+    print(f"playing '{design.name}' on the keyboard and the other devices; Ctrl+C to stop")
+    try:
+        while case.is_alive():
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    case.stop()
+    if anim is not None:
+        anim.stop()
+        dev.rgb.release()
+    return 0
+
+
 def _animation_slot(args) -> int:
     """Slot number (0 or 1) for brightness + 8 / + 9, after the confirmations the command needs."""
     if args.slot == 8 and not args.replace_brightness_8:
@@ -536,6 +567,9 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("name")
 
     sp.add_parser("daemon", help="run the host-mode daemon in the foreground")
+    q = sp.add_parser("sync", help="play a design on the keyboard and every OpenRGB device together, until Ctrl+C")
+    q.add_argument("design", help="python-romania or romania-canada")
+    q.add_argument("--no-keyboard", action="store_true", help="only the other devices")
 
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
@@ -548,6 +582,8 @@ def main(argv: list[str] | None = None) -> int:
             from .daemon import main as daemon_main
 
             return daemon_main([])
+        if args.cmd == "sync":
+            return cmd_sync(args)
         handler = {"list": cmd_list, "info": cmd_info, "probe": cmd_probe, "dpi": cmd_dpi, "rate": cmd_rate,
                    "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile}[args.cmd]
         handler(args)

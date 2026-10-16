@@ -25,6 +25,7 @@ SET_CLIENT_NAME = 50
 UPDATE_LEDS = 1050
 UPDATE_ZONE_LEDS = 1051
 SET_CUSTOM_MODE = 1100
+UPDATE_MODE = 1101
 
 DEVICE_TYPES = ["Motherboard", "DRAM", "GPU", "Cooler", "LED strip", "Keyboard", "Mouse", "Mouse mat", "Headset",
                 "Headset stand", "Gamepad", "Light", "Speaker", "Virtual", "Storage", "Case", "Microphone", "Accessory",
@@ -51,6 +52,7 @@ class Controller:
     led_names: list[str] = field(default_factory=list)
     modes: list[str] = field(default_factory=list)
     active_mode: int = 0
+    mode_data: list[bytes] = field(default_factory=list)  # each mode as sent, for UPDATE_MODE
 
     @property
     def kind(self) -> str:
@@ -98,8 +100,9 @@ def parse_controller(index: int, data: bytes, protocol: int = PROTOCOL) -> Contr
     location = r.string()
     num_modes = r.take("H")
     active = r.take("i")
-    modes = []
+    modes, mode_data = [], []
     for _ in range(num_modes):
+        start = r.pos
         modes.append(r.string())
         r.take("iIII")  # value, flags, speed min, speed max
         if protocol >= 3:
@@ -109,6 +112,7 @@ def parse_controller(index: int, data: bytes, protocol: int = PROTOCOL) -> Contr
             r.take("I")  # brightness
         r.take("II")  # direction, colour mode
         r.colors()
+        mode_data.append(r.data[start : r.pos])
     zones = []
     for _ in range(r.take("H")):
         zname = r.string()
@@ -130,7 +134,7 @@ def parse_controller(index: int, data: bytes, protocol: int = PROTOCOL) -> Contr
     for _ in range(r.take("H")):
         leds.append(r.string())
         r.take("I")
-    return Controller(index, name, ctype, vendor, description, location, zones, leds, modes, active)
+    return Controller(index, name, ctype, vendor, description, location, zones, leds, modes, active, mode_data)
 
 
 class OpenRGB:
@@ -195,6 +199,13 @@ class OpenRGB:
     def set_custom_mode(self, device: int) -> None:
         """Switch a device to the mode where the computer sets each LED ("Direct" or "Custom")."""
         self._send(device, SET_CUSTOM_MODE)
+
+    def set_mode(self, controller: Controller, name: str = "Direct") -> None:
+        """Switch to a mode by name. Some devices (ASUS/ENE RAM and GPUs) only change with this, not
+        with set_custom_mode."""
+        i = next(k for k, m in enumerate(controller.modes) if m.lower() == name.lower())
+        body = struct.pack("<i", i) + controller.mode_data[i]
+        self._send(controller.index, UPDATE_MODE, struct.pack("<I", len(body) + 4) + body)
 
     def update_leds(self, device: int, colors: list[int]) -> None:
         """Set all of a device's LEDs, in order (0xRRGGBB each)."""
