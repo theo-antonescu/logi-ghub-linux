@@ -76,3 +76,15 @@ def test_frames_play_in_order_with_their_transitions():
     assert d.loop_ms() == 800 and design.Design.from_dict(d.to_dict()) == d
     bounce = design.Layer("f", [], "frames", frames=frames * 2, cycle="bounce")
     assert [c for c, _ms, _t in bounce.timeline()][4] == frames[0]["colors"]  # 1 2 3 4 3 2
+
+
+def test_rising_flags_alternate_by_row_and_move_up():
+    keys = [k for col in presets.NAV_COLUMNS for k in col]
+    layer = design.Layer("s", keys, "flag_stream", [], period_ms=500, fade=False, flags=["romania", "canada"])
+    r = design.Design("t", [layer]).renderer(ZONES)
+    z = layout.zone_of
+    f0 = r.frame(0.0)
+    assert [f0[z(k)] for k in ("PrintScreen", "ScrollLock", "Pause")] == list(design.FLAG_ROWS["romania"])
+    assert [f0[z(k)] for k in ("Insert", "Home", "PageUp")] == list(design.FLAG_ROWS["canada"])
+    f1 = r.frame(0.5)  # one step later each row shows the flag that was below it
+    assert [f1[z(k)] for k in ("PrintScreen", "ScrollLock", "Pause")] == list(design.FLAG_ROWS["canada"])

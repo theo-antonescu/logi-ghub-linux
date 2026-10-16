@@ -44,6 +44,7 @@ EFFECTS = {
     "raise": "Raise the flag",
     "flags": "Flags (whole keyboard, in turn)",
     "frames": "Frames (paint each frame)",
+    "flag_stream": "Rising flags (one flag per row)",
 }
 # How a frame turns into the next one (G HUB's transition curves)
 TRANSITIONS = {
@@ -132,7 +133,7 @@ class Layer:
         """Time until the layer repeats: one period, one per flag (flags) or the frames' total (frames)."""
         if self.effect == "frames":
             return max(50, sum(ms for _c, ms, _tr in self.timeline()))
-        n = max(1, len(self.flags)) if self.effect == "flags" else 1
+        n = max(1, len(self.flags)) if self.effect in ("flags", "flag_stream") else 1
         return max(50, self.period_ms) * n
 
     def timeline(self) -> list[tuple[dict, int, str]]:
@@ -259,12 +260,16 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
 # Flags as colour at a position (fx, fy from 0 to 1 across the keys, y down). LED-friendly colours.
 FLAG_RED, FLAG_WHITE = 0xFF0010, 0xFFFFFF
 def _romania(fx: float, fy: float, name: str = "") -> int:
-    return (0x0030FF, 0xFFC800, 0xFF0010)[min(2, int(fx * 3))]
+    """Blue, yellow, red, the yellow stripe centred on the space bar (the middle of the typing area)."""
+    centre, _stem = _canada_anchor()
+    if fx < centre - 1 / 6:
+        return 0x0030FF
+    return 0xFFC800 if fx <= centre + 1 / 6 else 0xFF0010
 
 
-# The maple leaf, key by key (5 6 7 8, R T Y U I, F G H J, stem B): at one LED per key a
+# The maple leaf, key by key (F5, 5 6 7 8, R T Y U I, F G H J, stem B): at one LED per key a
 # drawn outline comes out ragged, so the leaf is spelled out.
-MAPLE_LEAF_KEYS = {"5", "6", "7", "8", "R", "T", "Y", "U", "I", "F", "G", "H", "J", "B"}
+MAPLE_LEAF_KEYS = {"F5", "5", "6", "7", "8", "R", "T", "Y", "U", "I", "F", "G", "H", "J", "B"}
 
 
 def _canada(fx: float, fy: float, name: str = "") -> int:
@@ -288,6 +293,18 @@ def _canada_anchor() -> tuple[float, float]:
 
 
 FLAGS = {"romania": ("Romania", _romania), "canada": ("Canada", _canada)}
+# A flag squeezed into one row of three keys (left, middle, right)
+FLAG_ROWS = {"romania": (0x0030FF, 0xFFC800, 0xFF0010), "canada": (FLAG_RED, FLAG_WHITE, FLAG_RED)}
+
+
+def _flag_stream(layer: "Layer", fx: float, row: int, t: float) -> int:
+    """Each row of keys is one flag (in turn from layer.flags) and the rows rise one row per period."""
+    flags = [FLAG_ROWS[f] for f in layer.flags if f in FLAG_ROWS] or [FLAG_ROWS["romania"]]
+    col = min(2, int(fx * 3))
+    pos = row + t * 1000 / max(50, layer.period_ms)  # rising: what is below moves up
+    i = math.floor(pos)
+    a, b = flags[i % len(flags)][col], flags[(i + 1) % len(flags)][col]
+    return lerp(a, b, pos - i) if layer.fade else a
 
 
 def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = "") -> int:
@@ -339,6 +356,7 @@ class DesignRenderer:
             self.layers.append((layer, [(c.zone, *pos[c.name]) for c in mine]))
         self.zones = [c.zone for c in caps]
         self.names = {c.zone: c.name for c in caps}
+        self.rows = {c.zone: round(c.y) for c in caps}  # 0 for the F-key row, then one per row below
 
     def frame(self, t: float) -> dict[int, int]:
         """``t`` in seconds."""
@@ -369,6 +387,8 @@ class DesignRenderer:
                     c = scale(colors[0], layer.floor + (1 - layer.floor) * level)
                 elif layer.effect == "flags":
                     c = _flags_effect(layer, fx, fy, t, self.names[zone])
+                elif layer.effect == "flag_stream":
+                    c = _flag_stream(layer, fx, self.rows[zone], t)
                 elif layer.effect == "frames":
                     c = _frames_effect(layer, self.names[zone], t)
                 elif layer.effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):

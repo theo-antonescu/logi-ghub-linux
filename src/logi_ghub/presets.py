@@ -53,10 +53,15 @@ def python_romania_design() -> Design:
 
 
 def romania_canada_design() -> Design:
-    """The whole keyboard as one big Romanian flag, rippling, then a Canadian flag, in turn."""
+    """The whole keyboard as one big Romanian flag, rippling, then a Canadian flag, in turn; on the
+    right-hand block a stream of small flags (one per row of keys) rises the whole time."""
     every = [c.name for c in layout.keycaps()]
-    return Design("Romania + Canada", [Layer("Flags", every, "flags", [], period_ms=6000, floor=0.55, spread=1.5,
-                                             flags=["romania", "canada"])])
+    right_block = [k for col in NAV_COLUMNS for k in col]
+    return Design("Romania + Canada", [
+        Layer("Flags", every, "flags", [], period_ms=6000, floor=0.55, spread=1.5, flags=["romania", "canada"]),
+        # on the block right of the main keys: a stream of small flags, one per row, rising
+        Layer("Rising flags", right_block, "flag_stream", [], period_ms=500, fade=False, flags=["romania", "canada"]),
+    ])
 
 
 # Ready-made designs to start from: key -> (title, design factory)
