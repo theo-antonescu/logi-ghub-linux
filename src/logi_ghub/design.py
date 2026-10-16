@@ -544,6 +544,28 @@ class DesignRenderer:
         return out
 
 
+class FrameLoop:
+    """A design rendered once for a whole loop, then played back by looking frames up: what the
+    background players use, so playing costs almost no CPU."""
+
+    def __init__(self, design: Design, zones: list[int] | None, period_ms: int):
+        import bisect
+
+        self.period = period_ms / 1000
+        self._bisect = bisect.bisect_right
+        frames = design.renderer(zones).frames(period_ms)
+        self.frames = [colours for colours, _n in frames]
+        self.starts, total = [], 0
+        for _colours, n in frames:
+            self.starts.append(total)
+            total += n
+        self.ticks = max(1, total)
+
+    def frame(self, t: float) -> dict[int, int]:
+        tick = int(t / self.period) % self.ticks
+        return self.frames[self._bisect(self.starts, tick) - 1]
+
+
 def fit_frames(design: Design, zones: list[int], periods=(32, 36, 40, 45, 48, 50, 60, 72, 75, 80, 90, 96, 100, 120, 144, 150, 160,
                                                           180, 200, 240),
                max_size: int | None = None):

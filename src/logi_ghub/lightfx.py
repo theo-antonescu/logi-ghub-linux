@@ -252,15 +252,16 @@ def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
     if light.get("design") and pk:
         from .design import Design
 
+        from .design import FrameLoop
+
         d = Design.from_dict(light["design"])
-        r = d.renderer(pk.zones)
         rgb.hold_static()
         record_applied(dev, light)
         if not d.animated:
-            pk.set_colors(r.frame(0.0))
+            pk.set_colors(d.renderer(pk.zones).frame(0.0))
             return None
-        # same frames as the stored animation (48 ms apart), sent exactly
-        anim = Animator(dev, r, fps=1000 / 48, quant_bits=8)
+        # rendered once, then played back: 48 ms frames like the stored animation, only changed keys sent
+        anim = Animator(dev, FrameLoop(d, pk.zones, 48), fps=1000 / 48, quant_bits=8)
         anim.start()
         return anim
     renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones))
