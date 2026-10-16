@@ -14,3 +14,10 @@ KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinpu
 
 # Alienware monitor lighting (AW3225QF, AW2725DF): the USB hub's HID controller.
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="187c", ATTRS{idProduct}=="1013|1014", TAG+="uaccess"
+
+# Logitech keyboard input devices, for key assignments in host mode: logi-ghubd
+# takes the keyboard's events (EVIOCGRAB) and types through its own virtual
+# keyboard. This also lets other programs of the logged-in user read what is
+# typed on these keyboards; leave it out if you don't use key assignments.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEY}=="1", ATTRS{idVendor}=="046d", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEY}=="1", KERNELS=="0005:046D:*", TAG+="uaccess"

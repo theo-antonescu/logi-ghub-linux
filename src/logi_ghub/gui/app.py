@@ -16,7 +16,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import __version__, lightfx, profiles  # noqa: E402
+from .. import __version__, chatter, keyremap, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
 from ..autostart import daemon_running  # noqa: E402
 from ..device import LogiDevice, discover  # noqa: E402
@@ -36,6 +36,14 @@ CSS = """
 .lgl-keyboard { padding: 6px; }
 .lgl-dim { opacity: 0.6; }
 """
+
+
+def layout_label(name: str) -> str:
+    """Key name as printed on the keycap where that is clearer (Grave -> `)."""
+    from .. import layout
+
+    label = layout.LABELS.get(name)
+    return f"{name} ({label})" if label and label != name and len(label) == 1 else name
 
 
 def run_async(fn, done=None, error=None):
@@ -322,8 +330,11 @@ class DevicePane(Gtk.Box, DesignLighting):
         if not stored:
             g.add(Adw.ActionRow(title="No computer profiles yet", subtitle="Use “Save current as…” to create one."))
         for prof in stored:
-            row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name),
-                                subtitle=f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros")
+            if dev.kind == "keyboard":
+                summary = f"{len(prof.key_actions)} key assignments · {len(prof.macros)} macros"
+            else:
+                summary = f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros"
+            row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary)
             if dev.hidpp is not None:  # host mode needs HID++ (not available on the G600)
                 sw = Gtk.Switch(active=prof.name == active, valign=Gtk.Align.CENTER, tooltip_text="Run in host mode")
                 sw.connect("notify::active", lambda s, _p, n=prof.name: self.set_host(n if s.get_active() else None))
@@ -596,6 +607,9 @@ class DevicePane(Gtk.Box, DesignLighting):
     def build_buttons(self):
         self.page_reset("buttons")
         dev, p = self.dev, self.profile
+        if self.remaps_keys():
+            self.build_keys()
+            return
         count = dev.binding_count()
         visible = bool(p and count)
         self.stack.get_page(self.pages["buttons"]).set_visible(visible)
@@ -629,16 +643,97 @@ class DevicePane(Gtk.Box, DesignLighting):
         title = self.dev.button_name(i) + (" (G-Shift)" if gshift else "")
         ActionDialog(title, current, [m.name for m in p.macros], done).present(self.win)
 
+    # -- keyboard key assignments (host mode) -----------------------------------------------
+    def remaps_keys(self) -> bool:
+        return bool(self.profile) and self.dev.kind == "keyboard" and self.dev.hidpp is not None and not self.dev.binding_count()
+
+    def build_keys(self):
+        p = self.profile
+        self.stack.get_page(self.pages["buttons"]).set_visible(True)
+        g = self.add_group("buttons", Adw.PreferencesGroup(
+            title="Keys",
+            description="Click a key to change what it does. Key assignments are run by the logi-ghubd service: turn on "
+                        "Host mode for this profile on the Profiles page. Holding Backspace + Esc + Enter together always "
+                        "gives you the normal keyboard back."))
+        view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None)
+        view.paint_on_drag = False
+        names = {zone: cap.name for zone, cap in view.buttons.items()}
+        view.set_colors({zone: 0x3584E4 for zone, name in names.items() if name in p.key_actions})
+        view.on_paint = lambda zone: self.edit_key(names[zone])
+        g.add(view)
+
+        g = self.add_group("buttons", Adw.PreferencesGroup(title="Assigned keys"))
+        if not p.key_actions:
+            g.add(Adw.ActionRow(title="Every key types normally"))
+        for name, a in sorted(p.key_actions.items()):
+            row = Adw.ActionRow(title=GLib.markup_escape_text(layout_label(name)), subtitle=GLib.markup_escape_text(a.label()),
+                                activatable=True)
+            reset = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Type normally again")
+            reset.add_css_class("flat")
+            reset.connect("clicked", lambda _b, n=name: self.reset_key(n))
+            row.add_suffix(reset)
+            row.connect("activated", lambda _r, n=name: self.edit_key(n))
+            g.add(row)
+        blocked = self.key_access_problem()
+        if blocked:
+            warn = Adw.ActionRow(title="Key assignments can't run yet", subtitle=GLib.markup_escape_text(blocked))
+            warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+            g.add(warn)
+        if p.key_actions and profiles.get_active().get(self.dev.key) != p.name:
+            note = Adw.ActionRow(title="Not running", subtitle="Turn on Host mode for this profile on the Profiles page to use these keys.")
+            note.add_prefix(Gtk.Image.new_from_icon_name("dialog-information-symbolic"))
+            g.add(note)
+
+    def key_access_problem(self) -> str | None:
+        """Why the service couldn't take over this keyboard's keys, or None."""
+        if str(self.dev.info.path).startswith("fake:"):
+            return None
+        nodes = keyremap.find_event_nodes(self.dev.info.path, self.dev.info.behind_receiver)
+        if not nodes:
+            return "The keyboard's input device wasn't found."
+        if not all(os.access(n.path, os.R_OK | os.W_OK) for n in nodes):
+            return ("This computer doesn't let the service read the keyboard yet. Install the updated device rule once: "
+                    "~/logi-ghub-linux/scripts/install.sh --udev")
+        return None
+
+    def edit_key(self, name: str):
+        try:
+            keyremap.key_code(name)
+        except ValueError:
+            self.toast(f"The {layout_label(name)} key is handled inside the keyboard and can't be reassigned")
+            return
+        p = self.profile
+        current = p.key_actions.get(name, Action("default"))
+
+        def done(a: Action):
+            if a.kind == "default":
+                p.key_actions.pop(name, None)
+            else:
+                p.key_actions[name] = a
+            self.mark_dirty()
+            self.build_buttons()
+
+        ActionDialog(layout_label(name), current, [m.name for m in p.macros], done).present(self.win)
+
+    def reset_key(self, name: str):
+        self.profile.key_actions.pop(name, None)
+        self.mark_dirty()
+        self.build_buttons()
+
     # -- macros page ----------------------------------------------------------------------
     def build_macros(self):
         self.page_reset("macros")
         p = self.profile
-        visible = bool(p and self.dev.binding_count() and self.dev.hidpp is not None)  # G600: no macro support
+        keyboard = self.remaps_keys()
+        visible = bool(p and (self.dev.binding_count() or keyboard) and self.dev.hidpp is not None)  # G600: no macro support
         self.stack.get_page(self.pages["macros"]).set_visible(visible)
         if not visible:
             return
-        note = ("On-board slots store macros in the device's spare memory sectors (short sequences only; "
-                "repeat modes need host mode).")
+        if keyboard:
+            note = "Macros on keys are played by the logi-ghubd service while this profile runs in host mode."
+        else:
+            note = ("On-board slots store macros in the device's spare memory sectors (short sequences only; "
+                    "repeat modes need host mode).")
         g = self.add_group("macros", Adw.PreferencesGroup(title="Macros", description=note))
         add = Gtk.Button(label="New macro", valign=Gtk.Align.CENTER)
         add.connect("clicked", lambda *_: self.edit_macro(None))
@@ -647,6 +742,7 @@ class DevicePane(Gtk.Box, DesignLighting):
             g.add(Adw.ActionRow(title="No macros", subtitle="Create one, then assign it to a button on the Assignments page."))
         for m in p.macros:
             used = [self.dev.button_name(i) for i, a in p.buttons.items() if a.kind == "macro" and a.macro == m.name]
+            used += [layout_label(k) for k, a in sorted(p.key_actions.items()) if a.kind == "macro" and a.macro == m.name]
             row = Adw.ActionRow(title=GLib.markup_escape_text(m.name),
                                 subtitle=GLib.markup_escape_text(m.to_text()[:80] + (f" · on {', '.join(used)}" if used else "")),
                                 activatable=True)
@@ -663,7 +759,7 @@ class DevicePane(Gtk.Box, DesignLighting):
         def done(old_name, new: Macro):
             if old_name:
                 p.macros = [new if m.name == old_name else m for m in p.macros]
-                for layer in (p.buttons, p.gshift_buttons):
+                for layer in (p.buttons, p.gshift_buttons, p.key_actions):
                     for i, a in layer.items():
                         if a.kind == "macro" and a.macro == old_name:
                             layer[i] = Action.run_macro(new.name)
@@ -682,6 +778,9 @@ class DevicePane(Gtk.Box, DesignLighting):
             for i, a in list(layer.items()):
                 if a.kind == "macro" and a.macro == name:
                     layer[i] = Action("default")
+        for k, a in list(p.key_actions.items()):
+            if a.kind == "macro" and a.macro == name:
+                del p.key_actions[k]
         self.mark_dirty()
         self.build_macros()
         self.build_buttons()
@@ -921,11 +1020,67 @@ class DevicePane(Gtk.Box, DesignLighting):
             r = Adw.ActionRow(title=title, subtitle=GLib.markup_escape_text(str(value)))
             r.add_css_class("property")
             g.add(r)
+        if self.dev.kind == "keyboard" and self.dev.hidpp is not None:
+            self._double_press_group()
         g2 = self.add_group("info", Adw.PreferencesGroup(title="HID++ features"))
         expander = Adw.ExpanderRow(title=f"{len(info.get('features', {}))} features")
         for name, idx in info.get("features", {}).items():
             expander.add_row(Adw.ActionRow(title=name, subtitle=f"index {idx}"))
         g2.add(expander)
+
+
+    def _double_press_group(self):
+        key = self.dev.key
+        s = chatter.load(key)
+        g = self.add_group("info", Adw.PreferencesGroup(
+            title="Double presses",
+            description="Worn or dusty switches sometimes type a key twice for one press. The logi-ghubd service can "
+                        "drop a second press that comes too soon after the key was let go. It works while the keyboard "
+                        "is connected to this computer, with or without Host mode, but not over Bluetooth to other "
+                        "devices: nothing can be stored on the keyboard to do this."))
+        on = Adw.SwitchRow(title="Block double presses", active=s.enabled)
+        ms = Adw.SpinRow.new_with_range(5, chatter.MAX_MS, 5)
+        ms.set_title("Drop a second press within")
+        ms.set_subtitle("milliseconds after the key was let go. Raise it if doubles still get through; lower it if "
+                        "quick double letters go missing.")
+        ms.set_value(s.threshold_ms)
+        ms.set_sensitive(s.enabled)
+
+        def save(*_):
+            s.enabled = on.get_active()
+            s.threshold_ms = int(ms.get_value())
+            try:
+                chatter.save(key, s)  # the service reads it again within a second or two
+            except OSError as e:
+                self.fail(e)
+
+        on.connect("notify::active", lambda *_: (save(), self.build_info()))
+        ms.connect("notify::value", save)
+        g.add(on)
+        g.add(ms)
+        if s.enabled:
+            problem = self.key_access_problem()
+            if not problem and not daemon_running() and not str(self.dev.info.path).startswith("fake:"):
+                problem = "The logi-ghubd service isn't running. Turn on “Run in the background at login” in the menu."
+            if problem:
+                warn = Adw.ActionRow(title="Not blocking yet", subtitle=GLib.markup_escape_text(problem))
+                warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+                g.add(warn)
+        stats = chatter.load_stats().get(key, {})
+        blocked = sorted(((n, e) for n, e in stats.items() if e.get("blocked")), key=lambda x: -x[1]["blocked"])
+        if blocked:
+            exp = Adw.ExpanderRow(title=f"{sum(e['blocked'] for _, e in blocked)} double presses blocked",
+                                  subtitle="by key, with how soon after the key was let go they came")
+            for name, e in blocked:
+                text = f"{e['blocked']} blocked, {e['blocked_min_ms']:g} to {e['blocked_max_ms']:g} ms"
+                if e.get("close"):
+                    text += f" · {e['close']} let through near the limit (closest {e['close_min_ms']:g} ms)"
+                exp.add_row(Adw.ActionRow(title=GLib.markup_escape_text(layout_label(name)), subtitle=text))
+            g.add(exp)
+            reset = Gtk.Button(label="Reset counts", valign=Gtk.Align.CENTER)
+            reset.add_css_class("flat")
+            reset.connect("clicked", lambda *_: (chatter.reset_stats(key), chatter.save(key, s), self.build_info()))
+            g.set_header_suffix(reset)
 
 
 class MainWindow(Adw.ApplicationWindow):

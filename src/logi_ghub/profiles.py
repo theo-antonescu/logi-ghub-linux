@@ -34,6 +34,7 @@ class Profile:
     gshift_buttons: dict[int, Action] = field(default_factory=dict)
     macros: list[Macro] = field(default_factory=list)
     lighting: dict = field(default_factory=dict)  # {"zones": {idx: effect dict}, "keys": {zone: rgb}, "brightness": n}
+    key_actions: dict[str, Action] = field(default_factory=dict)  # keyboard key name -> action (host mode)
 
     # -- json -----------------------------------------------------------------
     def to_dict(self) -> dict:
@@ -48,6 +49,7 @@ class Profile:
             "gshift_buttons": {str(k): v.to_dict() for k, v in sorted(self.gshift_buttons.items())},
             "macros": [m.to_dict() for m in self.macros],
             "lighting": self.lighting,
+            "key_actions": {k: v.to_dict() for k, v in sorted(self.key_actions.items())},
         }
 
     @classmethod
@@ -63,6 +65,7 @@ class Profile:
             gshift_buttons={int(k): Action.from_dict(v) for k, v in d.get("gshift_buttons", {}).items()},
             macros=[Macro.from_dict(m) for m in d.get("macros", [])],
             lighting=d.get("lighting", {}),
+            key_actions={k: Action.from_dict(v) for k, v in d.get("key_actions", {}).items()},
         )
 
     def macro(self, name: str) -> Macro | None:
