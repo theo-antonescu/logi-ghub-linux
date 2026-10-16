@@ -42,6 +42,7 @@ class KeyboardView(Gtk.Widget):
     def __init__(self, available_zones: list[int] | None, on_paint):
         super().__init__()
         self.on_paint = on_paint
+        self.paint_on_drag = True  # False: one call per click (for picking a key rather than painting)
         self.caps = layout.keycaps(available_zones)
         self.buttons = {c.zone: c for c in self.caps}  # zones shown
         self.colors: dict[int, int] = {}
@@ -93,6 +94,8 @@ class KeyboardView(Gtk.Widget):
             self.on_paint(zone)
 
     def _drag(self, _g, dx: float, dy: float):
+        if not self.paint_on_drag:
+            return
         ox, oy = self._drag_origin
         self._hit(ox + dx, oy + dy)
 
