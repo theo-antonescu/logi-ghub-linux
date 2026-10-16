@@ -20,9 +20,10 @@ File layout::
           has used both 0xB and 0xA): fn 1 individual keys, fn 2 five consecutive keys, fn 5
           ranges, fn 6 one colour for up to 13 keys, and fn 7 ends a frame: 00, frame index (u16),
           duration in periods (u16)
-    ...   0xFF padding, then the trailer packet 03 00 .. 00. Byte 7 of the header is the padded
+    ...   0xFF padding, then the trailer packet 03 00 .. 00. Bytes 6-7 of the header are the padded
           size in 256-byte units, without the 32 bytes of header line and trailer (G HUB sizes
-          files to fit; this program always writes 0x30, 12304 bytes)
+          files to fit). Each slot takes up to 400 units (102432 bytes); larger files are refused
+          at the first packet with status 0x9a.
 
 Only slot 1 is ever written by this program; slot 0 is refused.
 """
@@ -41,7 +42,7 @@ from ..hidpp import features as F
 log = logging.getLogger(__name__)
 
 FILE_SIZE = 12320  # what is transferred: the animation padded to 12304 bytes, then a 16-byte trailer
-LARGE_FILE_SIZE = 23072  # the largest file seen accepted (G HUB stored 19488 bytes; this app 23072 on brightness + 8)
+LARGE_FILE_SIZE = 102432  # the most each slot takes (measured): 400 x 256 bytes + 32; 102688 is refused
 BODY_SIZE = FILE_SIZE - 16
 TRAILER = b"\x03" + bytes(15)  # G HUB ends every upload with this packet; without it the keyboard refuses the file
 HEADER_SIZE = 0x4B
@@ -113,7 +114,7 @@ def build_file(name: str, frames: list[tuple[dict[int, int], int]], period_ms: i
     used = HEADER_SIZE + len(records) * RECORD
     units = 0x30 if max_size == FILE_SIZE else -(-(used - 16) // 256)  # body = units * 256 + 16
     header = bytearray(HEADER_SIZE)
-    header[0], header[7] = 0x01, units
+    header[0], header[6], header[7] = 0x01, units >> 8, units & 0xFF  # bytes 6-7: size in 256-byte units
     header[0x10:0x30] = name.encode("ascii", "replace")[:31].ljust(32, b"\x00")
     header[0x30:0x40] = uid or uuid.uuid4().bytes
     header[0x40:0x4B] = struct.pack(">HHHHHB", index, 0, 0, index, period_ms, brightness)

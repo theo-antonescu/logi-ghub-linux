@@ -63,8 +63,9 @@ Recorded while G HUB, in on-board memory mode, rewrote profile 2 three times (20
 ## Custom animation slots
 
 DFU fn 4 `03 01 "RGB_V0000"` uploads to brightness + 8 and `04 01 "RGB_V0000"` to brightness + 9
-(`04 00 …` is refused with status 0x93). Files can be larger than 12320 bytes: G HUB uploaded a
-19488-byte one. G HUB's "Effects on device → Replace effect" uses these uploads.
+(`04 00 …` is refused with status 0x93). Header bytes 6-7 are the file's size in 256-byte units
+(plus 32 bytes). Measured on 2026-10-15: each slot takes up to 400 units, 102432 bytes, whatever the
+other slot holds; 401 units is refused at the first packet with status 0x9a. G HUB's "Effects on device → Replace effect" uses these uploads.
 
 The 0x8071 fn 3 cap-1 setting is the device startup effect: `type primary(3) secondary(3)`.
 
