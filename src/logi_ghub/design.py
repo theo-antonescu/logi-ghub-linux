@@ -333,18 +333,21 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
     current = flags[i]
     if within > 1 - wipe and fx < (within - (1 - wipe)) / wipe * 1.05:
         current = flags[(i + 1) % len(flags)]
-    # a few diagonal ripples (layer.spread of them, rounded) cross each flag from left to right, each
-    # one entering before the one ahead of it has left
-    ripples = max(1, round(layer.spread))
-    level = 1.0
-    if within < 1 - wipe:
-        frac = within / (1 - wipe)
-        length = min(1.0, 1.2 / ripples)  # each crossing takes this share of the flag's time
-        for k in range(ripples):
-            start = k * (1 - length) / max(1, ripples - 1)
-            if start <= frac < start + length:
-                level = min(level, _sweep(fx, fy, (frac - start) / length, layer.floor))
+    # folds flutter from the pole (left) to the free end (right), nearly upright, stronger towards
+    # the free end, as on a real flag in the wind
+    level = _flutter(fx, fy, t, layer.floor)
     return scale(current(fx, fy, name), level)
+
+
+def _flutter(fx: float, fy: float, t: float, floor: float, steps: int = 2) -> float:
+    """Brightness 0-1 of a flag fluttering in the wind: two sets of folds of different sizes and
+    speeds run from left to right, leaning slightly (about 80 degrees), deeper towards the free end.
+    Kept to a few steps so the animation stays small enough to store."""
+    u = fx - 0.08 * (1 - fy)
+    big = max(0.0, math.sin(2 * math.pi * (1.5 * u - t / 2.0))) ** 2  # periods divide the 20 s loop
+    small = max(0.0, math.sin(2 * math.pi * (2.5 * u - t / 1.25 + 0.3))) ** 2
+    fold = min(1.0, 0.65 * big + 0.5 * small) * (0.35 + 0.65 * fx)
+    return 1 - (1 - floor) * round(fold * steps) / steps
 
 
 def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.22,
