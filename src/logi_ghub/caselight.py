@@ -22,7 +22,7 @@ SKIP_KINDS = {"Keyboard", "Mouse"}  # the app drives Logitech devices itself
 # blue looks pink); a gamma curve makes their colours match the keyboard's
 GAMMA = {"DRAM": 2.2, "GPU": 2.2}
 # white balance per device (red, green, blue multipliers): older LEDs drift towards yellow
-BALANCE = {"Kraken": (0.78, 0.85, 1.0)}
+BALANCE = {"Kraken": (0.68, 0.76, 1.0)}
 
 
 def balance_for(name: str) -> tuple[float, float, float]:
