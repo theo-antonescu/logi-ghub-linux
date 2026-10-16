@@ -4,8 +4,8 @@ Learned from a USB recording of G HUB saving an effect (tools/ghub-capture). The
 keeps custom animations in slots; brightness + 8 plays slot 0 and brightness + 9 slot 1.
 An animation is a file G HUB uploads with the DFU feature (0x00D0):
 
-* DFU fn 4 ``04, slot, "RGB_V0000"`` starts the upload; the keyboard answers with a
-  notification when it is ready.
+* DFU fn 4 ``03 01 "RGB_V0000"`` (brightness + 8) or ``04 01 "RGB_V0000"`` (brightness + 9)
+  starts the upload; the keyboard answers with a notification when it is ready.
 * the file follows in 16-byte packets; packet n (from 1) goes out on function n % 4, and
   each reply echoes n with a status (1 = continue, 2 = complete).
 
@@ -209,9 +209,11 @@ class Uploader:
             raise ValueError(f"refusing to write slot {slot}: only slot 1 (brightness + 9) may be changed")
         if len(data) % 16 or len(data) < HEADER_SIZE + 16 or data[0] != 0x01 or data[-16:] != TRAILER:
             raise ValueError("not an RGB animation file")
+        self._ready.clear()  # wait for this upload's own "ready" notification
         self.dev.add_handler(self._notify)
         try:
-            reply = self.dev.request(self.index, 4, bytes([0x04, slot]) + b"RGB_V0000".ljust(14, b"\x00"), timeout=5)
+            # G HUB starts an upload with 03 01 for brightness + 8 (slot 0) and 04 01 for brightness + 9
+            reply = self.dev.request(self.index, 4, bytes([0x03 + slot, 0x01]) + b"RGB_V0000".ljust(14, b"\x00"), timeout=5)
             if reply[4] not in (0x01, 0x03):
                 raise IOError(f"keyboard refused the upload (status {reply[4]:#04x})")
             if not self._ready.is_set():  # G HUB waits for this notification (about two seconds)
