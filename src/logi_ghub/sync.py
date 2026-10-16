@@ -48,6 +48,8 @@ class SyncPlayer:
         self.mtime = None
         self.settings = dict(DEFAULTS)
         self.case = None
+        self.monitor = None
+        self.monitor_checked = 0.0
         self.anim = None
         self.kb = None
         self.dark = False
@@ -70,6 +72,7 @@ class SyncPlayer:
                 self.mtime = None
                 return
             self._idle()
+            self._monitor()
 
     def start(self) -> None:
         from . import caselight, lightfx
@@ -89,9 +92,14 @@ class SyncPlayer:
                     self.kb = None
         self.case = caselight.CaseLights(design, t0)
         self.case.start()
+        self.monitor_checked = 0.0
+        self._monitor()
         log.info("sync: playing '%s'", design.name)
 
     def stop(self) -> None:
+        if self.monitor is not None:
+            self.monitor.stop()
+            self.monitor = None
         if self.case is not None:
             self.case.stop()
             self.case = None
@@ -108,6 +116,20 @@ class SyncPlayer:
             self.kb.close()
             self.kb = None
         self.dark = False
+
+    def _monitor(self) -> None:
+        """Start the Alienware monitor's player when the monitor is (or comes back) on."""
+        if self.monitor is not None and self.monitor.is_alive():
+            return
+        now = time.monotonic()
+        if now - self.monitor_checked < 10:
+            return
+        self.monitor_checked = now
+        from . import alienware
+
+        if alienware.find() is not None:
+            self.monitor = alienware.MonitorLights(self.case.design, self.case.t0, self.case.dark)
+            self.monitor.start()
 
     # -- inactivity -------------------------------------------------------------------------------
     def _idle(self) -> None:

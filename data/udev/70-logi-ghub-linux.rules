@@ -11,3 +11,6 @@ KERNEL=="hidraw*", SUBSYSTEM=="hidraw", KERNELS=="0005:046D:*", TAG+="uaccess"
 
 # uinput, used by the host-side macro/remap daemon to emit key presses.
 KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+
+# Alienware monitor lighting (AW3225QF, AW2725DF): the USB hub's HID controller.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="187c", ATTRS{idProduct}=="1013|1014", TAG+="uaccess"
