@@ -251,7 +251,7 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
         # the sky behind the flag: the background colour, paler towards the top
         sky = 0 if layer.background is None else lerp(layer.background, 0xFFFFFF, (1 - fy) * 0.55)
         if layer.flags:  # diagonal ripples crossing it, like the big flags
-            flag = scale(base, _sweep(fx, fy, (phase * 2) % 1.0, layer.floor, width=0.3))
+            flag = scale(base, _sweep(fx, fy, (phase * 2) % 1.0, layer.floor, width=0.3, slant=1.0))  # 3 x 5 keys
         else:
             wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
             flag = scale(base, layer.floor + (1 - layer.floor) * wave)
@@ -339,16 +339,18 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
     return scale(current(fx, fy, name), level)
 
 
-def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.35) -> float:
+def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.22) -> float:
     """Brightness 0-1 for a soft diagonal band dimming the keys to ``floor`` as it crosses from left to right.
 
-    ``phase`` runs 0-1 over one crossing (negative: no band). Kept to a few steps so whole diagonals
-    change together, which keeps animations small enough to store.
+    The band runs from bottom left to top right ("/"); ``slant`` is how far right its top is, as a share
+    of the width (0.22 on the whole keyboard is about 60 degrees). ``phase`` runs 0-1 over one crossing
+    (negative: no band). Kept to a few steps so whole diagonals change together, which keeps animations
+    small enough to store.
     """
     if phase < 0:
         return 1.0
-    u = fx + slant * (1 - fy)  # leaning: the top of the band is ahead
-    centre = -width + phase * (1 + slant + 2 * width)
+    u = fx - slant * (1 - fy)  # the band's top is further right than its bottom
+    centre = -width + phase * (1 + slant + 2 * width) - slant
     d = abs(u - centre) / width
     if d >= 1:
         return 1.0
