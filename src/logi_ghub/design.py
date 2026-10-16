@@ -258,37 +258,21 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
 
 # Flags as colour at a position (fx, fy from 0 to 1 across the keys, y down). LED-friendly colours.
 FLAG_RED, FLAG_WHITE = 0xFF0010, 0xFFFFFF
-# A maple leaf in a unit square (y down), simplified from the Canadian flag
-MAPLE_LEAF = [(0.50, 0.00), (0.59, 0.17), (0.71, 0.11), (0.66, 0.40), (0.85, 0.22), (0.81, 0.34), (0.99, 0.37),
-              (0.87, 0.51), (0.91, 0.59), (0.61, 0.70), (0.65, 0.80), (0.53, 0.77), (0.54, 1.00), (0.46, 1.00),
-              (0.47, 0.77), (0.35, 0.80), (0.39, 0.70), (0.09, 0.59), (0.13, 0.51), (0.01, 0.37), (0.19, 0.34),
-              (0.15, 0.22), (0.34, 0.40), (0.29, 0.11), (0.41, 0.17)]
-
-
-def _inside(x: float, y: float, poly) -> bool:
-    inside = False
-    j = len(poly) - 1
-    for i in range(len(poly)):
-        xi, yi = poly[i]
-        xj, yj = poly[j]
-        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
-            inside = not inside
-        j = i
-    return inside
-
-
-def _romania(fx: float, fy: float) -> int:
+def _romania(fx: float, fy: float, name: str = "") -> int:
     return (0x0030FF, 0xFFC800, 0xFF0010)[min(2, int(fx * 3))]
 
 
-def _canada(fx: float, fy: float) -> int:
-    """Centred on the space bar (the middle of the typing area), with the leaf's stem on B."""
-    centre, stem = _canada_anchor()
-    if abs(fx - centre) > 0.25:
+# The maple leaf, key by key (tip 5 6 7, arms R T Y U, body G H, stem B): at one LED per key a
+# drawn outline comes out ragged, so the leaf is spelled out.
+MAPLE_LEAF_KEYS = {"5", "6", "7", "R", "T", "Y", "U", "G", "H", "B"}
+
+
+def _canada(fx: float, fy: float, name: str = "") -> int:
+    """Red, white, red bands centred on the space bar (the middle of the typing area), leaf in the middle."""
+    centre, _stem = _canada_anchor()
+    if name in MAPLE_LEAF_KEYS or abs(fx - centre) > 0.25:
         return FLAG_RED
-    top, width = 0.22, 0.30
-    lx, ly = (fx - (centre - width / 2)) / width, (fy - top) / (stem + 0.03 - top)
-    return FLAG_RED if 0 <= lx <= 1 and 0 <= ly <= 1 and _inside(lx, ly, MAPLE_LEAF) else FLAG_WHITE
+    return FLAG_WHITE
 
 
 _ANCHOR: tuple[float, float] | None = None
@@ -306,7 +290,7 @@ def _canada_anchor() -> tuple[float, float]:
 FLAGS = {"romania": ("Romania", _romania), "canada": ("Canada", _canada)}
 
 
-def _flags_effect(layer: "Layer", fx: float, fy: float, t: float) -> int:
+def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = "") -> int:
     """Each flag fills the keys and ripples for one period, then the next wipes in from the left."""
     flags = [FLAGS[f][1] for f in layer.flags if f in FLAGS] or [_romania]
     per = max(50, layer.period_ms) / 1000
@@ -322,7 +306,7 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float) -> int:
     wave = 0.5 + 0.5 * math.sin(2 * math.pi * (t / per - fx * layer.spread))
     steps = 4
     level = layer.floor + (1 - layer.floor) * round(wave * (steps - 1)) / (steps - 1)
-    return scale(current(fx, fy), level)
+    return scale(current(fx, fy, name), level)
 
 
 def _frames_effect(layer: "Layer", name: str, t: float) -> int:
@@ -384,7 +368,7 @@ class DesignRenderer:
                     level = 0.5 - 0.5 * math.cos(2 * math.pi * cycle)
                     c = scale(colors[0], layer.floor + (1 - layer.floor) * level)
                 elif layer.effect == "flags":
-                    c = _flags_effect(layer, fx, fy, t)
+                    c = _flags_effect(layer, fx, fy, t, self.names[zone])
                 elif layer.effect == "frames":
                     c = _frames_effect(layer, self.names[zone], t)
                 elif layer.effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):
