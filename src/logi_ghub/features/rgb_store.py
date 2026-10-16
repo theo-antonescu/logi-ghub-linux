@@ -4,8 +4,8 @@ Learned from a USB recording of G HUB saving an effect (tools/ghub-capture). The
 keeps custom animations in slots; brightness + 8 plays slot 0 and brightness + 9 slot 1.
 An animation is a file G HUB uploads with the DFU feature (0x00D0):
 
-* DFU fn 4 ``04, slot, "RGB_V0000"`` starts the upload; the keyboard answers with a
-  notification when it is ready.
+* DFU fn 4 ``03 01 "RGB_V0000"`` (brightness + 8) or ``04 01 "RGB_V0000"`` (brightness + 9)
+  starts the upload; the keyboard answers with a notification when it is ready.
 * the file follows in 16-byte packets; packet n (from 1) goes out on function n % 4, and
   each reply echoes n with a status (1 = continue, 2 = complete).
 
@@ -20,9 +20,10 @@ File layout::
           has used both 0xB and 0xA): fn 1 individual keys, fn 2 five consecutive keys, fn 5
           ranges, fn 6 one colour for up to 13 keys, and fn 7 ends a frame: 00, frame index (u16),
           duration in periods (u16)
-    ...   0xFF padding, then the trailer packet 03 00 .. 00. Byte 7 of the header is the padded
+    ...   0xFF padding, then the trailer packet 03 00 .. 00. Bytes 6-7 of the header are the padded
           size in 256-byte units, without the 32 bytes of header line and trailer (G HUB sizes
-          files to fit; this program always writes 0x30, 12304 bytes)
+          files to fit). Each slot takes up to 400 units (102432 bytes); larger files are refused
+          at the first packet with status 0x9a.
 
 Only slot 1 is ever written by this program; slot 0 is refused.
 """
@@ -41,12 +42,13 @@ from ..hidpp import features as F
 log = logging.getLogger(__name__)
 
 FILE_SIZE = 12320  # what is transferred: the animation padded to 12304 bytes, then a 16-byte trailer
+LARGE_FILE_SIZE = 102432  # the most each slot takes (measured): 400 x 256 bytes + 32; 102688 is refused
 BODY_SIZE = FILE_SIZE - 16
 TRAILER = b"\x03" + bytes(15)  # G HUB ends every upload with this packet; without it the keyboard refuses the file
 HEADER_SIZE = 0x4B
 RECORD = 17
 MAX_RECORDS = (BODY_SIZE - HEADER_SIZE) // RECORD
-WRITABLE_SLOTS = (1,)  # brightness + 9; slot 0 (brightness + 8) is never written
+WRITABLE_SLOTS = (1,)  # brightness + 9; slot 0 (brightness + 8) only when the owner explicitly asks (allow_slot0)
 OP_INDIVIDUAL, OP_RANGE, OP_SINGLE_VALUE, OP_FRAME_END = 0x1B, 0x5B, 0x6B, 0x7B
 FN_INDIVIDUAL, FN_CONSECUTIVE, FN_RANGE, FN_SINGLE_VALUE, FN_FRAME_END = 1, 2, 5, 6, 7
 
@@ -91,8 +93,12 @@ def encode_frame(colors: dict[int, int]) -> list[bytes]:
 
 
 def build_file(name: str, frames: list[tuple[dict[int, int], int]], period_ms: int = 32, brightness: int = 100,
-               uid: bytes | None = None) -> bytes:
-    """``frames``: [(zone -> colour, duration in periods)]. Raises ValueError if it doesn't fit."""
+               uid: bytes | None = None, max_size: int = FILE_SIZE) -> bytes:
+    """``frames``: [(zone -> colour, duration in periods)]. Raises ValueError if it doesn't fit.
+
+    Files are padded to ``FILE_SIZE`` like G HUB's usual size; with a smaller ``max_size`` (G HUB sized
+    the brightness + 8 slot's file to its content) the file is only as large as it needs to be.
+    """
     records: list[bytes] = []
     index = 0
     previous: dict[int, int] = {}
@@ -102,15 +108,18 @@ def build_file(name: str, frames: list[tuple[dict[int, int], int]], period_ms: i
         records.append(bytes([OP_FRAME_END, 0x00]) + struct.pack(">HH", index, max(1, duration)) + bytes(11))
         previous = dict(colors)
         index += 1
-    if len(records) > MAX_RECORDS:
-        raise ValueError(f"animation needs {len(records)} commands; the keyboard stores at most {MAX_RECORDS}")
+    limit = (max_size - 16 - 16 - HEADER_SIZE) // RECORD
+    if len(records) > limit:
+        raise ValueError(f"animation needs {len(records)} commands; this slot stores at most {limit}")
+    used = HEADER_SIZE + len(records) * RECORD
+    units = 0x30 if max_size == FILE_SIZE else -(-(used - 16) // 256)  # body = units * 256 + 16
     header = bytearray(HEADER_SIZE)
-    header[0], header[7] = 0x01, 0x30
+    header[0], header[6], header[7] = 0x01, units >> 8, units & 0xFF  # bytes 6-7: size in 256-byte units
     header[0x10:0x30] = name.encode("ascii", "replace")[:31].ljust(32, b"\x00")
     header[0x30:0x40] = uid or uuid.uuid4().bytes
     header[0x40:0x4B] = struct.pack(">HHHHHB", index, 0, 0, index, period_ms, brightness)
     data = bytes(header) + b"".join(records)
-    return data + b"\xff" * (BODY_SIZE - len(data)) + TRAILER
+    return data + b"\xff" * (units * 256 + 16 - len(data)) + TRAILER
 
 
 def parse_file(data: bytes) -> dict:
@@ -151,7 +160,7 @@ def parse_file(data: bytes) -> dict:
 
 def frames_from_lighting(light: dict, zones: list[int], period_ms: int = 32) -> list[tuple[dict[int, int], int]]:
     """Sample the app's lighting (painted keys and/or a colour sequence) into stored frames."""
-    from ..lightfx import Renderer, sequence_color  # noqa: F401 - Renderer does the work
+    from ..lightfx import Renderer
 
     r = Renderer(light, zones)
     anim = r.animation
@@ -197,14 +206,16 @@ class Uploader:
         if msg.sub_id == self.index and msg.swid == 0:
             self._ready.set()
 
-    def upload(self, slot: int, data: bytes, progress=None) -> None:
-        if slot not in WRITABLE_SLOTS:
+    def upload(self, slot: int, data: bytes, progress=None, allow_slot0: bool = False) -> None:
+        if slot not in WRITABLE_SLOTS and not (slot == 0 and allow_slot0):
             raise ValueError(f"refusing to write slot {slot}: only slot 1 (brightness + 9) may be changed")
         if len(data) % 16 or len(data) < HEADER_SIZE + 16 or data[0] != 0x01 or data[-16:] != TRAILER:
             raise ValueError("not an RGB animation file")
+        self._ready.clear()  # wait for this upload's own "ready" notification
         self.dev.add_handler(self._notify)
         try:
-            reply = self.dev.request(self.index, 4, bytes([0x04, slot]) + b"RGB_V0000".ljust(14, b"\x00"), timeout=5)
+            # G HUB starts an upload with 03 01 for brightness + 8 (slot 0) and 04 01 for brightness + 9
+            reply = self.dev.request(self.index, 4, bytes([0x03 + slot, 0x01]) + b"RGB_V0000".ljust(14, b"\x00"), timeout=5)
             if reply[4] not in (0x01, 0x03):
                 raise IOError(f"keyboard refused the upload (status {reply[4]:#04x})")
             if not self._ready.is_set():  # G HUB waits for this notification (about two seconds)
@@ -251,11 +262,26 @@ def load_local(model_key: str, slot: int) -> dict | None:
         return None
 
 
-def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
-    """Turn the app's lighting into an animation and save it in ``slot``. Returns the parsed result."""
-    zones = dev.per_key.zones
-    frames = frames_from_lighting(light, zones)
-    data = build_file(name, frames)
-    Uploader(dev.hidpp).upload(slot, data, progress)
+def store_data(dev, data: bytes, slot: int = 1, progress=None) -> dict:
+    """The one path that writes a custom-animation slot: upload, keep a copy, return the parsed file.
+    Slot 0 (brightness + 8) is written only by callers that pass it on purpose."""
+    Uploader(dev.hidpp).upload(slot, data, progress, allow_slot0=slot == 0)
     save_local(dev.key, slot, data)
     return parse_file(data)
+
+
+def store_design(dev, design, slot: int = 1, progress=None) -> tuple[dict, int]:
+    """Fit a lighting design (smoothest frame rate, most detail) and store it. Returns (file, frame ms)."""
+    from ..design import fit_best
+
+    _frames, period, data, _detail = fit_best(design, dev.per_key.zones)
+    return store_data(dev, data, slot, progress), period
+
+
+def store_lighting(dev, light: dict, name: str, slot: int = 1, progress=None) -> dict:
+    """Store a profile's lighting: its design, or (older profiles) its painted keys and colour sequence."""
+    if light.get("design"):
+        from ..design import Design
+
+        return store_design(dev, Design.from_dict({**light["design"], "name": name}), slot, progress)[0]
+    return store_data(dev, build_file(name, frames_from_lighting(light, dev.per_key.zones)), slot, progress)

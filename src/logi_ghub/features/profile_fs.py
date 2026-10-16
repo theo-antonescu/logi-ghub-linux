@@ -1,11 +1,15 @@
-"""Reading the on-board profiles of keyboards with Profile Management (0x8101), e.g. the G915 X.
+"""The on-board profiles of keyboards with Profile Management (0x8101), e.g. the G915 X.
 
-Learned from a USB recording of G HUB (tools/ghub-capture). Read-only on purpose: only the
-two calls G HUB uses to read are implemented.
+Learned from USB recordings of G HUB (tools/ghub-capture).
 
 * fn 8 opens a file: ``bank, file, size_hi, size_lo`` (bank 0 holds the profiles in use,
   bank 1 the factory ones; file 0 is the bank's directory, 0x400 bytes).
 * fn 12 reads 16 bytes of the open file: ``offset_hi, offset_lo, 0``.
+* Writing (bank 0, as G HUB does in on-board memory mode): fn 2 ``size_hi size_lo 00`` starts,
+  fn 3 sends the data 16 bytes at a time, fn 7 ``00 file size_hi size_lo crc32`` commits it.
+  A profile file's crc32 is over the whole file; the directory's first 4 bytes are the crc32 of
+  the rest of it, and that is also the crc its commit carries. After changing a profile G HUB
+  rewrites the directory (36 bytes for three profiles) with the profile's new crc.
 
 Directory: ``crc32(4) count(1)`` then entries ``profile(1) 81 01 40 63 crc32(4) file(1)``, ended by 0xFF.
 
@@ -26,9 +30,10 @@ reads back (it keeps its own copy), so their per-key colours can't be shown; the
 from __future__ import annotations
 
 import struct
+import zlib
 from dataclasses import dataclass
 
-from ..hidpp import Device, HIDPPError
+from ..hidpp import Device
 from ..hidpp import features as F
 
 PROFILE_SIZE = 0x63
@@ -144,10 +149,10 @@ class ProfileFS:
     def active(self) -> tuple[bool, int]:
         """(in on-board mode, number of the profile in use), from the state query G HUB sends (fn 6, zeros).
 
-        The reply's first byte is 1 in on-board mode and 0 while the host owns the keyboard.
+        The reply's first byte has bit 0 set in on-board mode and is 0 while the host owns the keyboard.
         """
         d = self.dev.call(F.PROFILE_MANAGEMENT, 6, 0, 0, 0)
-        return d[0] == 1, d[2]
+        return bool(d[0] & 1), d[2]  # bit 1 is set too at times (seen after animation uploads)
 
     def select(self, number: int) -> None:
         """Make on-board profile ``number`` the one in use, as G HUB does (fn 9 naming the profile and its CRC).
@@ -160,6 +165,29 @@ class ProfileFS:
                               PROFILE_SIZE >> 8, PROFILE_SIZE & 0xFF, crc.to_bytes(4, "big"))
                 return
         raise ValueError(f"there is no on-board profile {number}")
+
+    def _write(self, file: int, data: bytes, crc: int) -> None:
+        self.dev.call(F.PROFILE_MANAGEMENT, 2, len(data) >> 8, len(data) & 0xFF, 0)
+        for off in range(0, len(data), 16):
+            self.dev.call(F.PROFILE_MANAGEMENT, 3, data[off : off + 16])
+        self.dev.call(F.PROFILE_MANAGEMENT, 7, 0, file, len(data) >> 8, len(data) & 0xFF, crc.to_bytes(4, "big"))
+
+    def write_profile(self, number: int, data: bytes) -> None:
+        """Replace on-board profile ``number`` (bank 0) with ``data`` (0x63 bytes) and update the directory."""
+        if len(data) != PROFILE_SIZE:
+            raise ValueError(f"a profile is {PROFILE_SIZE} bytes, not {len(data)}")
+        entries = parse_directory(self.read_file(0, 0, DIR_SIZE))
+        if number not in [n for n, _f, _c in entries]:
+            raise ValueError(f"there is no on-board profile {number}")
+        crc = zlib.crc32(data)
+        file = next(f for n, f, _c in entries if n == number)
+        self._write(file, data, crc)
+        body = bytes([len(entries)])
+        for n, f, c in entries:
+            body += bytes([n, 0x81, 0x01, 0x40, PROFILE_SIZE]) + (crc if n == number else c).to_bytes(4, "big") + bytes([f])
+        body += b"\xff"
+        dir_crc = zlib.crc32(body)
+        self._write(0, dir_crc.to_bytes(4, "big") + body, dir_crc)
 
     def profiles(self, bank: int = 0) -> list[StoredProfile]:
         entries = parse_directory(self.read_file(bank, 0, DIR_SIZE))

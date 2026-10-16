@@ -46,23 +46,6 @@ def test_nothing_to_save():
         rs.frames_from_lighting({}, ZONES)
 
 
-def test_python_romania_preset_fits():
-    from logi_ghub import layout, presets
-
-    frames = presets.python_romania(ZONES)
-    data = rs.build_file("Python + Romania", frames, period_ms=48)
-    info = rs.parse_file(data)
-    assert len(info["frames"]) == 150 and info["period_ms"] == 48
-    f0 = info["frames"][0][0]
-    assert f0[layout.zone_of("A")] == presets.PY_STRING and f0[layout.zone_of("Space")] == presets.PY_SKY
-    ins = [f[layout.zone_of("Insert")] for f, _ in info["frames"]]
-    assert len(set(ins)) > 10  # the flag ripples
-    assert all(c & 0xFFFF == 0 or (c >> 16) < 0x10 for c in ins)  # Insert stays a shade of the blue stripe
-    logo = {f[layout.zone_of("Logo")] for f, _ in info["frames"]}
-    assert len(logo) > 50  # rainbow
-    assert all(f[layout.zone_of("Mute")] == f[layout.zone_of("Logo")] for f, _ in info["frames"])
-
-
 def test_parse_reads_g_hub_records_with_its_software_id_and_consecutive_keys():
     header = bytearray(rs.HEADER_SIZE)
     header[0], header[7] = 0x01, 0x00

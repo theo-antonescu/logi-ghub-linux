@@ -111,3 +111,16 @@ def test_backup_and_restore():
     o.write_profile(p)
     assert o.restore(b) == [1]
     assert o.read_profile(1).dpis[0] == 400
+
+
+def test_dpi_shift_is_stored_as_one_of_the_stages():
+    p = ob.OnboardProfile(bytes.fromhex(dump()["sectors"]["0x1"]), 1)
+    assert p.shift_dpi == p.dpis[p.shift_dpi_index] and p.max_dpi_stages == 5 and p.led is None
+    p.set_shift_dpi(2400)
+    assert p.shift_dpi_index == 3 and p.shift_dpi == 2400
+    p.set_shift_dpi(0)  # 0: leave it
+    assert p.shift_dpi == 2400
+    with pytest.raises(ValueError):
+        p.set_shift_dpi(1234)
+    p.raw[2] = 7  # an index past the five stages
+    assert p.shift_dpi is None

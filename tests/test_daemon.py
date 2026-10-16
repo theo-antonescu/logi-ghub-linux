@@ -16,6 +16,9 @@ class FakeInput:
     def wheel(self, clicks, horizontal=False):
         self.events.append(("wheel", clicks, horizontal))
 
+    def close(self):
+        pass
+
 
 def session(profile_kwargs):
     mouse = fake_devices()[0]
@@ -111,6 +114,48 @@ def test_hold_alt_and_repeat_tab_while_held():
     tabs = [e for e in ev if e == (15, True)]
     assert 2 <= len(tabs) <= 5  # Tab tapped every ~100 ms while held
     assert all(e[0] in (15, 56) for e in ev)
+
+
+def daemon_with_session(monkeypatch, tmp_path, profile_kwargs):
+    from logi_ghub import daemon
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    vin = FakeInput()
+    monkeypatch.setattr(daemon, "VirtualInput", lambda: vin)
+    d = daemon.Daemon(fake=True)
+    mouse = fake_devices()[0]
+    prof = profiles.Profile(name="t", device=mouse.key, **profile_kwargs)
+    profiles.save_profile(prof)
+    profiles.set_active(mouse.key, "t")
+    s = Session(mouse, prof, events=d.events, runner=d.runner, vinput=vin)
+    s.profile_mtime = daemon._profile_mtime(mouse.key, "t")
+    s.apply()
+    d.sessions[mouse.key] = s
+    return d, s, mouse, vin
+
+
+def test_lost_device_ends_its_session_and_lets_held_keys_go(monkeypatch, tmp_path):
+    d, s, mouse, vin = daemon_with_session(monkeypatch, tmp_path, {"buttons": {3: Action.keypress("C", ["LeftCtrl"])}})
+    collect(s, mouse)
+    spy(s, mouse, 1 << 3)
+    assert vin.events == [(29, True), (46, True)]
+    d._on_lost(("msg", s, None), OSError(19, "No such device"))
+    assert mouse.key not in d.sessions
+    assert sorted(vin.events[2:]) == [(29, False), (46, False)]
+    d._on_lost(("reload",), OSError(19, "No such device"))  # failures outside a session only get logged
+    d.shutdown()
+
+
+def test_scan_restarts_a_session_whose_device_was_unplugged(monkeypatch, tmp_path):
+    d, s, mouse, _ = daemon_with_session(monkeypatch, tmp_path, {})
+    d.scan()
+    assert d.sessions[mouse.key] is s  # nothing changed: the session keeps running
+    mouse.hidpp.lost = True
+    d.scan()
+    fresh = d.sessions[mouse.key]
+    assert fresh is not s and not fresh.lost and fresh.dev.fake_model.mode == 2  # started again on the new device
+    d.shutdown()
 
 
 def test_release_while_idle_turns_the_lights_back_on():

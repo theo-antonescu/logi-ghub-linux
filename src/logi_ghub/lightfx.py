@@ -28,6 +28,7 @@ import time
 
 from . import layout
 from .config import data_dir
+from .design import _pack, lerp, scale
 from .features import lighting
 
 log = logging.getLogger(__name__)
@@ -43,28 +44,6 @@ PATTERNS = {
 LOGO_ZONE = lighting.SPECIAL_ZONES["Logo"]
 
 
-def default_animation() -> dict:
-    return {"enabled": False, "colors": [0xFF0000, 0x00FF00, 0x0000FF], "step_ms": 1000, "fade": True,
-            "pattern": "all", "keep_painted": True}
-
-
-def _rgb(c: int) -> tuple[float, float, float]:
-    return ((c >> 16) & 0xFF) / 255, ((c >> 8) & 0xFF) / 255, (c & 0xFF) / 255
-
-
-def _pack(r: float, g: float, b: float) -> int:
-    return (round(max(0, min(1, r)) * 255) << 16) | (round(max(0, min(1, g)) * 255) << 8) | round(max(0, min(1, b)) * 255)
-
-
-def lerp(a: int, b: int, t: float) -> int:
-    ra, ga, ba = _rgb(a)
-    rb, gb, bb = _rgb(b)
-    return _pack(ra + (rb - ra) * t, ga + (gb - ga) * t, ba + (bb - ba) * t)
-
-
-def scale(c: int, k: float) -> int:
-    r, g, b = _rgb(c)
-    return _pack(r * k, g * k, b * k)
 
 
 def hue(h: float) -> int:
@@ -88,7 +67,6 @@ class Renderer:
     def __init__(self, light: dict, zones: list[int] | None = None, clusters: int = 2):
         self.light = light or {}
         self.caps = layout.keycaps(zones)
-        x0, y0, x1, y1 = layout.bounds(self.caps) if self.caps else (0, 0, 1, 1)
         main = [c for c in self.caps if c.y >= 0] or self.caps
         mx0, my0, mx1, my1 = layout.bounds(main) if main else (0, 0, 1, 1)
         self.pos: dict[int, tuple[float, float]] = {}
@@ -194,24 +172,25 @@ def _quantize(colors: dict[int, int], bits: int = 4) -> dict[int, int]:
 class Animator(threading.Thread):
     """Plays a colour sequence on the keyboard by sending per-key frames."""
 
-    def __init__(self, dev, renderer: Renderer, on_error=None):
+    def __init__(self, dev, renderer, on_error=None, fps: float | None = None, quant_bits: int | None = None):
         super().__init__(name="lighting-animator", daemon=True)
         self.dev = dev
-        self.renderer = renderer
+        self.renderer = renderer  # anything with frame(t) -> {zone: colour}
         self.stop_event = threading.Event()
         self.paused = threading.Event()
         self.on_error = on_error
-        anim = renderer.animation or {}
+        anim = getattr(renderer, "animation", None) or {}
         wave = anim.get("pattern", "all") != "all"
-        self.fps = 8 if wave else 15
+        self.fps = fps or (8 if wave else 15)
         # Rounding only matters while colours fade; stepped sequences keep the exact colours chosen.
-        self.quant_bits = 8 if not anim.get("fade", True) else (4 if wave else 6)
+        self.quant_bits = quant_bits or (8 if not anim.get("fade", True) else (4 if wave else 6))
         self.last: dict[int, int] = {}
+        self.start_time = time.monotonic()  # shared with other players to stay in step
 
     def run(self) -> None:
         pk = self.dev.per_key
         zones = set(pk.zones)
-        start = time.monotonic()
+        start = self.start_time
         failures = 0
         while not self.stop_event.is_set():
             t0 = time.monotonic()
@@ -248,6 +227,21 @@ def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
         rgb.claim()
     if dev.brightness and light.get("brightness") is not None:
         dev.brightness.set(int(light["brightness"]))
+    if light.get("design") and pk:
+        from .design import Design
+
+        from .design import FrameLoop
+
+        d = Design.from_dict(light["design"])
+        rgb.hold_static()
+        record_applied(dev, light)
+        if not d.animated:
+            pk.set_colors(d.renderer(pk.zones).frame(0.0))
+            return None
+        # rendered once, then played back: 48 ms frames like the stored animation, only changed keys sent
+        anim = Animator(dev, FrameLoop(d, pk.zones, 48), fps=1000 / 48, quant_bits=8)
+        anim.start()
+        return anim
     renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones))
     if renderer.animation and pk:
         rgb.hold_static()  # per-key frames show only while the firmware effect is Static

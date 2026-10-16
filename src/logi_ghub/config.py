@@ -15,22 +15,15 @@ def use_sandbox() -> None:
     os.environ["XDG_DATA_HOME"] = str(root / "data")
 
 
-def config_dir() -> Path:
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    d = base / APP
+def _app_dir(env: str, default: Path) -> Path:
+    d = Path(os.environ.get(env) or default) / APP
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def config_dir() -> Path:
+    return _app_dir("XDG_CONFIG_HOME", Path.home() / ".config")
 
 
 def data_dir() -> Path:
-    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    d = base / APP
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def runtime_dir() -> Path:
-    base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{APP}-{os.getuid()}")
-    d = base / APP
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return _app_dir("XDG_DATA_HOME", Path.home() / ".local" / "share")

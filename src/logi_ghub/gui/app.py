@@ -16,14 +16,16 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import __version__, keys, lightfx, profiles  # noqa: E402
+from .. import __version__, chatter, keyremap, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
-from ..device import LogiDevice, find_devices  # noqa: E402
+from ..autostart import daemon_running  # noqa: E402
+from ..device import LogiDevice, discover  # noqa: E402
 from ..features import lighting  # noqa: E402
 from ..hidpp import features as F  # noqa: E402
 from ..features import onboard as ob  # noqa: E402
 from ..macros import Macro  # noqa: E402
 from .editors import ActionDialog, MacroDialog, confirm  # noqa: E402
+from .design_page import DesignLighting  # noqa: E402
 from .keyboard import KeyboardView, int_to_rgba, rgba_to_int  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -34,6 +36,14 @@ CSS = """
 .lgl-keyboard { padding: 6px; }
 .lgl-dim { opacity: 0.6; }
 """
+
+
+def layout_label(name: str) -> str:
+    """Key name as printed on the keycap where that is clearer (Grave -> `)."""
+    from .. import layout
+
+    label = layout.LABELS.get(name)
+    return f"{name} ({label})" if label and label != name and len(label) == 1 else name
 
 
 def run_async(fn, done=None, error=None):
@@ -53,20 +63,6 @@ def run_async(fn, done=None, error=None):
     threading.Thread(target=work, daemon=True).start()
 
 
-def daemon_running() -> bool:
-    for pid in os.listdir("/proc"):
-        if not pid.isdigit():
-            continue
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                cmd = f.read().replace(b"\0", b" ")
-        except OSError:
-            continue
-        if b"logi-ghubd" in cmd or b"logi_ghub.daemon" in cmd or b"logi-ghub-cli daemon" in cmd:
-            return True
-    return False
-
-
 def _clear(group_box: Gtk.Box):
     child = group_box.get_first_child()
     while child:
@@ -75,7 +71,7 @@ def _clear(group_box: Gtk.Box):
         child = nxt
 
 
-class DevicePane(Gtk.Box):
+class DevicePane(Gtk.Box, DesignLighting):
     """Everything about one device: profiles, DPI, buttons, macros, lighting."""
 
     def __init__(self, win: "MainWindow", dev: LogiDevice):
@@ -93,9 +89,17 @@ class DevicePane(Gtk.Box):
         self.onboard_effects: list[str] = []
         self.stored_profiles = []
         self.stored_active: int | None = None
-        self.animator = None
+        self.animator: lightfx.Animator | None = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
+        self.mode = 0
+        self.info: dict = {}
+        self.kb_view: KeyboardView | None = None
+        self.renderer: lightfx.Renderer | None = None
+        self._t0 = 0.0
+        self._preview_source: int | None = None  # GLib timer redrawing the preview
+        self._apply_pending: int | None = None  # GLib timer sending the lighting to the device
+        self._claimed = False  # this pane took the lighting over from the keyboard
 
         self.banner = Adw.Banner(button_label="Save")
         self.banner.connect("button-clicked", lambda *_: self.save())
@@ -228,7 +232,8 @@ class DevicePane(Gtk.Box):
                     self.profile = profiles.Profile(name="Default", device=self.dev.key)
                     self.target = ("computer", "Default")
                     self.dirty = True  # exists only in memory until saved
-                if self.light_state == "app" and applied is not None and self.profile.lighting != applied:
+                if self.light_state == "app" and applied is not None and self.profile.lighting != applied \
+                        and not self.dev.per_key:  # keyboards show the profile's design and say what the keyboard shows
                     # show what this app last put on the keyboard, which is what it is showing now
                     self.profile.lighting = applied
                     self.dirty = True
@@ -325,8 +330,11 @@ class DevicePane(Gtk.Box):
         if not stored:
             g.add(Adw.ActionRow(title="No computer profiles yet", subtitle="Use “Save current as…” to create one."))
         for prof in stored:
-            row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name),
-                                subtitle=f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros")
+            if dev.kind == "keyboard":
+                summary = f"{len(prof.key_actions)} key assignments · {len(prof.macros)} macros"
+            else:
+                summary = f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros"
+            row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary)
             if dev.hidpp is not None:  # host mode needs HID++ (not available on the G600)
                 sw = Gtk.Switch(active=prof.name == active, valign=Gtk.Align.CENTER, tooltip_text="Run in host mode")
                 sw.connect("notify::active", lambda s, _p, n=prof.name: self.set_host(n if s.get_active() else None))
@@ -364,9 +372,6 @@ class DevicePane(Gtk.Box):
         group = Gio.SimpleActionGroup()
         a = Gio.SimpleAction.new("write-slot", GLib.VariantType.new("s"))
         a.connect("activate", lambda _a, v: self.write_profile_to_slot(*v.get_string().split("\x1f")))
-        group.add_action(a)
-        a = Gio.SimpleAction.new("store-preset", GLib.VariantType.new("s"))
-        a.connect("activate", lambda _a, v: self._store_preset(v.get_string()))
         group.add_action(a)
         a = Gio.SimpleAction.new("delete-profile", GLib.VariantType.new("s"))
         a.connect("activate", lambda _a, v: self.delete_profile(v.get_string()))
@@ -518,7 +523,7 @@ class DevicePane(Gtk.Box):
         p = self.profile
         lo, hi = (self.dpi_values[0], self.dpi_values[-1]) if self.dpi_values else (100, 25600)
         step = (self.dpi_values[1] - self.dpi_values[0]) if len(self.dpi_values) > 1 else 50
-        max_stages = 4 if self.slots and hasattr(self.slots[0], "max_dpi_stages") else 5
+        max_stages = self.slots[0].max_dpi_stages if self.slots else 5
         g = self.add_group("dpi", Adw.PreferencesGroup(title="DPI stages", description=f"Up to {max_stages} stages, {lo}–{hi} DPI. "
                                                        "The DPI buttons step through these."))
         add = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Add a stage", sensitive=len(p.dpi_stages) < max_stages)
@@ -602,6 +607,9 @@ class DevicePane(Gtk.Box):
     def build_buttons(self):
         self.page_reset("buttons")
         dev, p = self.dev, self.profile
+        if self.remaps_keys():
+            self.build_keys()
+            return
         count = dev.binding_count()
         visible = bool(p and count)
         self.stack.get_page(self.pages["buttons"]).set_visible(visible)
@@ -635,16 +643,97 @@ class DevicePane(Gtk.Box):
         title = self.dev.button_name(i) + (" (G-Shift)" if gshift else "")
         ActionDialog(title, current, [m.name for m in p.macros], done).present(self.win)
 
+    # -- keyboard key assignments (host mode) -----------------------------------------------
+    def remaps_keys(self) -> bool:
+        return bool(self.profile) and self.dev.kind == "keyboard" and self.dev.hidpp is not None and not self.dev.binding_count()
+
+    def build_keys(self):
+        p = self.profile
+        self.stack.get_page(self.pages["buttons"]).set_visible(True)
+        g = self.add_group("buttons", Adw.PreferencesGroup(
+            title="Keys",
+            description="Click a key to change what it does. Key assignments are run by the logi-ghubd service: turn on "
+                        "Host mode for this profile on the Profiles page. Holding Backspace + Esc + Enter together always "
+                        "gives you the normal keyboard back."))
+        view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None)
+        view.paint_on_drag = False
+        names = {zone: cap.name for zone, cap in view.buttons.items()}
+        view.set_colors({zone: 0x3584E4 for zone, name in names.items() if name in p.key_actions})
+        view.on_paint = lambda zone: self.edit_key(names[zone])
+        g.add(view)
+
+        g = self.add_group("buttons", Adw.PreferencesGroup(title="Assigned keys"))
+        if not p.key_actions:
+            g.add(Adw.ActionRow(title="Every key types normally"))
+        for name, a in sorted(p.key_actions.items()):
+            row = Adw.ActionRow(title=GLib.markup_escape_text(layout_label(name)), subtitle=GLib.markup_escape_text(a.label()),
+                                activatable=True)
+            reset = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Type normally again")
+            reset.add_css_class("flat")
+            reset.connect("clicked", lambda _b, n=name: self.reset_key(n))
+            row.add_suffix(reset)
+            row.connect("activated", lambda _r, n=name: self.edit_key(n))
+            g.add(row)
+        blocked = self.key_access_problem()
+        if blocked:
+            warn = Adw.ActionRow(title="Key assignments can't run yet", subtitle=GLib.markup_escape_text(blocked))
+            warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+            g.add(warn)
+        if p.key_actions and profiles.get_active().get(self.dev.key) != p.name:
+            note = Adw.ActionRow(title="Not running", subtitle="Turn on Host mode for this profile on the Profiles page to use these keys.")
+            note.add_prefix(Gtk.Image.new_from_icon_name("dialog-information-symbolic"))
+            g.add(note)
+
+    def key_access_problem(self) -> str | None:
+        """Why the service couldn't take over this keyboard's keys, or None."""
+        if str(self.dev.info.path).startswith("fake:"):
+            return None
+        nodes = keyremap.find_event_nodes(self.dev.info.path, self.dev.info.behind_receiver)
+        if not nodes:
+            return "The keyboard's input device wasn't found."
+        if not all(os.access(n.path, os.R_OK | os.W_OK) for n in nodes):
+            return ("This computer doesn't let the service read the keyboard yet. Install the updated device rule once: "
+                    "~/logi-ghub-linux/scripts/install.sh --udev")
+        return None
+
+    def edit_key(self, name: str):
+        try:
+            keyremap.key_code(name)
+        except ValueError:
+            self.toast(f"The {layout_label(name)} key is handled inside the keyboard and can't be reassigned")
+            return
+        p = self.profile
+        current = p.key_actions.get(name, Action("default"))
+
+        def done(a: Action):
+            if a.kind == "default":
+                p.key_actions.pop(name, None)
+            else:
+                p.key_actions[name] = a
+            self.mark_dirty()
+            self.build_buttons()
+
+        ActionDialog(layout_label(name), current, [m.name for m in p.macros], done).present(self.win)
+
+    def reset_key(self, name: str):
+        self.profile.key_actions.pop(name, None)
+        self.mark_dirty()
+        self.build_buttons()
+
     # -- macros page ----------------------------------------------------------------------
     def build_macros(self):
         self.page_reset("macros")
         p = self.profile
-        visible = bool(p and self.dev.binding_count() and self.dev.hidpp is not None)  # G600: no macro support
+        keyboard = self.remaps_keys()
+        visible = bool(p and (self.dev.binding_count() or keyboard) and self.dev.hidpp is not None)  # G600: no macro support
         self.stack.get_page(self.pages["macros"]).set_visible(visible)
         if not visible:
             return
-        note = ("On-board slots store macros in the device's spare memory sectors (short sequences only; "
-                "repeat modes need host mode).")
+        if keyboard:
+            note = "Macros on keys are played by the logi-ghubd service while this profile runs in host mode."
+        else:
+            note = ("On-board slots store macros in the device's spare memory sectors (short sequences only; "
+                    "repeat modes need host mode).")
         g = self.add_group("macros", Adw.PreferencesGroup(title="Macros", description=note))
         add = Gtk.Button(label="New macro", valign=Gtk.Align.CENTER)
         add.connect("clicked", lambda *_: self.edit_macro(None))
@@ -653,6 +742,7 @@ class DevicePane(Gtk.Box):
             g.add(Adw.ActionRow(title="No macros", subtitle="Create one, then assign it to a button on the Assignments page."))
         for m in p.macros:
             used = [self.dev.button_name(i) for i, a in p.buttons.items() if a.kind == "macro" and a.macro == m.name]
+            used += [layout_label(k) for k, a in sorted(p.key_actions.items()) if a.kind == "macro" and a.macro == m.name]
             row = Adw.ActionRow(title=GLib.markup_escape_text(m.name),
                                 subtitle=GLib.markup_escape_text(m.to_text()[:80] + (f" · on {', '.join(used)}" if used else "")),
                                 activatable=True)
@@ -669,7 +759,7 @@ class DevicePane(Gtk.Box):
         def done(old_name, new: Macro):
             if old_name:
                 p.macros = [new if m.name == old_name else m for m in p.macros]
-                for layer in (p.buttons, p.gshift_buttons):
+                for layer in (p.buttons, p.gshift_buttons, p.key_actions):
                     for i, a in layer.items():
                         if a.kind == "macro" and a.macro == old_name:
                             layer[i] = Action.run_macro(new.name)
@@ -688,6 +778,9 @@ class DevicePane(Gtk.Box):
             for i, a in list(layer.items()):
                 if a.kind == "macro" and a.macro == name:
                     layer[i] = Action("default")
+        for k, a in list(p.key_actions.items()):
+            if a.kind == "macro" and a.macro == name:
+                del p.key_actions[k]
         self.mark_dirty()
         self.build_macros()
         self.build_buttons()
@@ -705,13 +798,16 @@ class DevicePane(Gtk.Box):
         if "led" in light and not dev.rgb:
             self._profile_led_group(light["led"])
             return
+        if dev.per_key:
+            self.build_design_lighting()
+            return
         light.setdefault("zones", {})
 
         g = self.add_group("lighting", Adw.PreferencesGroup(title="Lighting", description=self._lighting_state_text()))
-        give_back = Gtk.Button(label="Hand back to keyboard", valign=Gtk.Align.CENTER,
-                               tooltip_text="Stop controlling the lighting; the keyboard shows its own on-board effect again")
+        give_back = Gtk.Button(label="Hand back to device", valign=Gtk.Align.CENTER,
+                               tooltip_text="Stop controlling the lighting; the device shows its own on-board effect again")
         give_back.connect("clicked", lambda *_: self.release_lighting())
-        show = Gtk.Button(label="Show on keyboard", valign=Gtk.Align.CENTER, tooltip_text="Put this profile's lighting on the keyboard now")
+        show = Gtk.Button(label="Show on device", valign=Gtk.Align.CENTER, tooltip_text="Put this profile's lighting on the device now")
         show.add_css_class("suggested-action")
         show.connect("clicked", lambda *_: self.lighting_changed(dirty=False))
         header = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
@@ -729,16 +825,8 @@ class DevicePane(Gtk.Box):
             row.add_suffix(scale)
             g.add(row)
 
-        if self.stored_profiles:
-            self._stored_profiles_group()
-        if dev.has(F.DFU) and dev.per_key and self.onboard_effects:
-            self._custom_slots_group()
-        self._keyboard_group()
-        if dev.per_key:
-            self._animation_group()
         for zone in (dev.rgb.zones if dev.rgb else []):
             self._zone_group(zone, light["zones"])
-        self._start_preview()
 
     def _profile_led_group(self, led: dict):
         """Mice that keep their lighting inside each on-board profile (G600)."""
@@ -777,313 +865,18 @@ class DevicePane(Gtk.Box):
             duration.set_sensitive(not is_off and led["effect"] != 0)
             self.mark_dirty()
 
-        changed_quiet = changed
         color_row.set_sensitive(not off)
         duration.set_sensitive(not off and led.get("effect", 0) != 0)
         for w, sig in ((combo, "notify::selected"), (color_btn, "notify::rgba"), (duration, "notify::value"), (gshift_btn, "notify::rgba")):
-            w.connect(sig, changed_quiet)
+            w.connect(sig, changed)
 
     def _lighting_state_text(self) -> str:
+        """For devices with lighting zones only (mice); keyboards with per-key lighting use the design page."""
         if self.light_state == "service":
-            return "The logi-ghubd service is running this profile; saving applies your changes to the keyboard."
+            return "The logi-ghubd service is running this profile; saving applies your changes to the device."
         if self.light_state == "onboard":
-            names = ", ".join(f"“{n}”" for n in self.onboard_effects) or "its default effect"
-            return (f"The keyboard is showing its own on-board effect (custom animations stored on it: {names}). Keyboards can't report "
-                    "those colours back, so the picture shows this profile. Any change here takes over the lighting.")
-        return ("This is what the keyboard is showing. Changes appear right away and last until the keyboard sleeps, "
-                "unless the profile runs in host mode (then the service keeps it, including animations).")
-
-    def _stored_profiles_group(self):
-        """The lighting saved in the keyboard's own profiles (read the way G HUB reads it)."""
-        g = self.add_group("lighting", Adw.PreferencesGroup(
-            title="Saved on the keyboard",
-            description="The lighting of the keyboard's on-board profiles (switched with its profile keys), as G HUB "
-                        "saved it. Custom animations are stored separately and their colours can't be read back."))
-        for sp in self.stored_profiles:
-            light = sp.lighting
-            title = f"Profile {sp.number}" + (f": {sp.name}" if sp.name and not sp.name.startswith("PROFILE_NAM") else "")
-            desc = light.describe()
-            if light.effect_id == 0x0C:
-                slot = light.params[0]
-                if slot < len(self.onboard_effects):
-                    desc = f"Custom animation “{self.onboard_effects[slot]}”" + (f", {light.brightness}%" if light.brightness else "")
-            row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(
-                desc + f" · power saving after {sp.powersave_timeout} s, off after {sp.poweroff_timeout} s"))
-            swatches = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
-            for c in light.colors:
-                sw = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(), sensitive=False)
-                sw.set_rgba(int_to_rgba(c))
-                swatches.append(sw)
-            row.add_suffix(swatches)
-            if sp.number == self.stored_active:
-                row.add_prefix(Gtk.Image(icon_name="object-select-symbolic", tooltip_text="The profile the keyboard is using"))
-                row.set_subtitle(row.get_subtitle() + " · in use")
-            else:
-                use = Gtk.Button(label="Use", valign=Gtk.Align.CENTER,
-                                 tooltip_text=f"Switch the keyboard to profile {sp.number} (same as Fn + F{sp.number + 1})")
-                use.connect("clicked", lambda _b, n=sp.number: self._use_stored(n))
-                row.add_suffix(use)
-            preview = light.to_lighting()
-            if light.effect_id == 0x0C:  # a custom animation: playable if this computer has a copy
-                from ..features import rgb_store
-
-                local = rgb_store.load_local(self.dev.key, light.params[0])
-                if local is not None and local["frames"] and light.params[0] < len(self.onboard_effects) \
-                        and local["name"] == self.onboard_effects[light.params[0]]:
-                    b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Play it in the picture below")
-                    b.connect("clicked", lambda _b, info=local: self._preview_frames(info["frames"], info["period_ms"]))
-                    row.add_suffix(b)
-            elif preview is not None:
-                b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Show this in the picture below (approximate)")
-                b.connect("clicked", lambda _b, pv=preview: self._preview_stored(pv))
-                row.add_suffix(b)
-            g.add(row)
-
-    def _use_stored(self, number: int):
-        from ..features.profile_fs import ProfileFS
-
-        run_async(lambda: ProfileFS(self.dev.hidpp).select(number),
-                  lambda _r: (self.toast(f"The keyboard is on profile {number}"), self.load()), self.fail)
-
-    def _custom_slots_group(self):
-        """The keyboard's two custom-animation slots (brightness + 8 and + 9)."""
-        from ..features import rgb_store
-
-        g = self.add_group("lighting", Adw.PreferencesGroup(
-            title="Custom animations on the keyboard",
-            description="Played by the keyboard itself with brightness + 8 and brightness + 9, even with no computer "
-                        "connected. This app only ever writes the brightness + 9 slot."))
-        for slot, name in enumerate(self.onboard_effects[:2]):
-            keys_label = f"Brightness + {8 + slot}"
-            local = rgb_store.load_local(self.dev.key, slot)
-            mine = local is not None and local["name"] == name
-            if slot == 0:
-                sub = f"“{name}” (made in G HUB; protected" + (
-                    f", backed up on this computer, {len(local['frames'])} frames)" if mine else
-                    ", and its colours can't be read back)")
-            elif mine:
-                sub = f"“{name}”, saved from this app ({len(local['frames'])} frames)"
-            else:
-                sub = f"“{name}” (made in G HUB; its colours can't be read back)"
-            row = Adw.ActionRow(title=keys_label, subtitle=GLib.markup_escape_text(sub))
-            if mine:
-                b = Gtk.Button(label="Preview", valign=Gtk.Align.CENTER, tooltip_text="Play it in the picture below")
-                b.connect("clicked", lambda _b, info=local: self._preview_frames(info["frames"], info["period_ms"]))
-                row.add_suffix(b)
-            if slot in rgb_store.WRITABLE_SLOTS:
-                from .. import presets
-
-                menu = Gio.Menu()
-                for key, (title, _make, _period) in presets.PRESETS.items():
-                    menu.append(title, f"pane.store-preset::{key}")
-                row.add_suffix(Gtk.MenuButton(label="Presets", menu_model=menu, valign=Gtk.Align.CENTER,
-                                              tooltip_text="Store a ready-made animation in this slot"))
-                save = Gtk.Button(label="Save current lighting here", valign=Gtk.Align.CENTER,
-                                  tooltip_text="Store the painted keys and/or colour sequence below in this slot")
-                save.add_css_class("suggested-action")
-                save.connect("clicked", lambda _b, s=slot, n=name: self._store_animation(s, n))
-                row.add_suffix(save)
-            g.add(row)
-
-    def _store_animation(self, slot: int, current_name: str):
-        from ..features import rgb_store
-
-        light = json.loads(json.dumps(self.profile.lighting))
-        name = self.profile.name[:31] or "logi-ghub-linux"
-
-        def go():
-            self.toast("Saving to the keyboard…")
-
-            def work():
-                anim = getattr(self, "animator", None)
-                if anim:
-                    anim.stop()
-                return rgb_store.store_lighting(self.dev, light, name, slot)
-
-            def done(info):
-                self.onboard_effects = self.dev.rgb.onboard_effect_names() if self.dev.rgb else self.onboard_effects
-                self.toast(f"Saved “{info['name']}” to brightness + {8 + slot} ({len(info['frames'])} frames)")
-                self.build_lighting()
-
-            run_async(work, done, self.fail)
-
-        confirm(self.win, f"Save to brightness + {8 + slot}?",
-                f"This replaces “{current_name}” on the keyboard with this profile's painted keys and colour sequence. "
-                "Brightness + 8 is never changed.", "Save", go)
-
-    def _store_preset(self, key: str):
-        from .. import presets
-        from ..features import rgb_store
-
-        title, make, period = presets.PRESETS[key]
-        current = self.onboard_effects[1] if len(self.onboard_effects) > 1 else "the current animation"
-
-        def go():
-            self.toast("Saving to the keyboard…")
-
-            def work():
-                data = rgb_store.build_file(title, make(self.dev.per_key.zones, period_ms=period), period_ms=period)
-                rgb_store.Uploader(self.dev.hidpp).upload(1, data)
-                rgb_store.save_local(self.dev.key, 1, data)
-                return rgb_store.parse_file(data)
-
-            def done(info):
-                self.onboard_effects = self.dev.rgb.onboard_effect_names()
-                self.toast(f"Saved “{title}” to brightness + 9")
-                self.build_lighting()
-                self._preview_frames(info["frames"], info["period_ms"])
-
-            run_async(work, done, self.fail)
-
-        confirm(self.win, "Save to brightness + 9?", f"This replaces “{current}” with the “{title}” animation.", "Save", go)
-
-    def _preview_frames(self, frames: list, period_ms: int):
-        """Play stored frames in the on-screen keyboard."""
-        self._stop_preview()
-        total = sum(d for _, d in frames) or 1
-        self._t0 = GLib.get_monotonic_time() / 1e6
-
-        def tick():
-            pos = int(((GLib.get_monotonic_time() / 1e6 - self._t0) * 1000 / max(1, period_ms)) % total)
-            for colors, dur in frames:
-                if pos < dur:
-                    self.kb_view.set_colors(colors)
-                    break
-                pos -= dur
-            return True
-
-        tick()
-        if len(frames) > 1:
-            self._preview_source = GLib.timeout_add(max(16, period_ms), tick)
-
-    def _preview_stored(self, light: dict):
-        """Draw a stored effect in the on-screen keyboard without touching the device."""
-        self._stop_preview()
-        self.renderer = lightfx.Renderer(light, self.dev.per_key.zones if self.dev.per_key else None,
-                                         len(self.dev.rgb.zones) if self.dev.rgb else 1)
-        self._t0 = GLib.get_monotonic_time() / 1e6
-
-        def tick():
-            self.kb_view.set_colors(self.renderer.frame(GLib.get_monotonic_time() / 1e6 - self._t0))
-            return True
-
-        tick()
-        if self.renderer.is_animated():
-            self._preview_source = GLib.timeout_add(66, tick)
-
-    def _keyboard_group(self):
-        p = self.profile
-        g = self.add_group("lighting", Adw.PreferencesGroup(
-            title="Keys", description="Pick a colour, then click or drag over keys to paint them."))
-        picker = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
-        picker.set_rgba(int_to_rgba(self.paint_color))
-        picker.connect("notify::rgba", lambda b, _p: setattr(self, "paint_color", rgba_to_int(b.get_rgba())))
-        box = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
-        box.append(picker)
-        fill = Gtk.Button(label="Fill all")
-        clear = Gtk.Button(label="Clear")
-        box.append(fill)
-        box.append(clear)
-        if self.dev.per_key:
-            g.set_header_suffix(box)
-        self.kb_view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None)
-        painted = p.lighting.setdefault("keys", {})
-
-        def ensure_static_base():
-            zones = p.lighting["zones"]
-            if self.dev.rgb and zones.get("0", {}).get("effect") != 0x01 and not (p.lighting.get("animation") or {}).get("enabled"):
-                zones["0"] = lighting.Effect(0x01, color=0xFFFFFF).to_dict()
-                self.build_lighting_later()
-
-        def paint(zone):
-            painted[str(zone)] = self.paint_color
-            ensure_static_base()
-            self.lighting_changed()
-
-        def fill_all(*_):
-            for z in self.kb_view.buttons:
-                painted[str(z)] = self.paint_color
-            ensure_static_base()
-            self.lighting_changed()
-
-        def clear_all(*_):
-            painted.clear()
-            self.lighting_changed()
-
-        if self.dev.per_key:
-            self.kb_view.on_paint = paint
-        fill.connect("clicked", fill_all)
-        clear.connect("clicked", clear_all)
-        g.add(self.kb_view)
-
-    def _animation_group(self):
-        light = self.profile.lighting
-        anim = light.get("animation") or lightfx.default_animation()
-        g = self.add_group("lighting", Adw.PreferencesGroup(
-            title="Colour sequence",
-            description="Cycle the keys through your own colours, in your order. Runs from the computer: "
-                        "it plays while this app is open, or always when the profile runs in host mode."))
-        enabled = Adw.SwitchRow(title="Play a colour sequence", active=bool(anim.get("enabled")))
-        g.add(enabled)
-
-        colors_row = Adw.ActionRow(title="Colours, in order")
-        colors_box = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
-        colors_row.add_suffix(colors_box)
-        g.add(colors_row)
-        step = Adw.SpinRow.new_with_range(50, 30000, 50)
-        step.set_title("Time per colour (ms)")
-        step.set_value(anim.get("step_ms", 1000))
-        g.add(step)
-        fade = Adw.SwitchRow(title="Fade between colours", active=anim.get("fade", True))
-        g.add(fade)
-        pattern_keys = list(lightfx.PATTERNS)
-        pattern = Adw.ComboRow(title="Pattern", model=Gtk.StringList.new(list(lightfx.PATTERNS.values())))
-        pattern.set_selected(pattern_keys.index(anim.get("pattern", "all")) if anim.get("pattern", "all") in pattern_keys else 0)
-        g.add(pattern)
-        keep = Adw.SwitchRow(title="Keep painted keys", subtitle="Keys you painted stay their colour while the rest animate",
-                             active=anim.get("keep_painted", True))
-        g.add(keep)
-        colors = [int(c) for c in anim.get("colors", [])] or [0xFF0000]
-
-        def store(*_):
-            light["animation"] = {
-                "enabled": enabled.get_active(), "colors": list(colors), "step_ms": int(step.get_value()),
-                "fade": fade.get_active(), "pattern": pattern_keys[pattern.get_selected()], "keep_painted": keep.get_active(),
-            }
-            for w in (colors_row, step, fade, pattern, keep):
-                w.set_sensitive(enabled.get_active())
-            self.lighting_changed()
-
-        def rebuild_colors():
-            child = colors_box.get_first_child()
-            while child:
-                nxt = child.get_next_sibling()
-                colors_box.remove(child)
-                child = nxt
-            for i, c in enumerate(colors):
-                b = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), tooltip_text=f"Colour {i + 1}")
-                b.set_rgba(int_to_rgba(c))
-                b.connect("notify::rgba", lambda btn, _p, idx=i: (colors.__setitem__(idx, rgba_to_int(btn.get_rgba())), store()))
-                colors_box.append(b)
-            if len(colors) > 1:
-                rm = Gtk.Button(icon_name="list-remove-symbolic", tooltip_text="Remove the last colour")
-                rm.add_css_class("flat")
-                rm.connect("clicked", lambda *_: (colors.pop(), rebuild_colors(), store()))
-                colors_box.append(rm)
-            if len(colors) < 12:
-                add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add a colour")
-                add.add_css_class("flat")
-                add.connect("clicked", lambda *_: (colors.append(self.paint_color), rebuild_colors(), store()))
-                colors_box.append(add)
-
-        rebuild_colors()
-        for w in (colors_row, step, fade, pattern, keep):
-            w.set_sensitive(enabled.get_active())
-        enabled.connect("notify::active", store)
-        step.connect("notify::value", store)
-        fade.connect("notify::active", store)
-        pattern.connect("notify::selected", store)
-        keep.connect("notify::active", store)
+            return "The device is showing its own on-board lighting. Any change here takes over the lighting until you hand it back."
+        return "This is what the device is showing. Changes appear right away and last until it sleeps."
 
     def _zone_group(self, zone: lighting.Zone, zones: dict):
         stored = zones.get(str(zone.index))
@@ -1144,44 +937,20 @@ class DevicePane(Gtk.Box):
         direction.connect("notify::selected", changed)
 
     # preview and live application
-    def build_lighting_later(self):
-        GLib.idle_add(lambda: self.build_lighting() and False)
-
-    def _start_preview(self):
-        self._stop_preview()
-        if not getattr(self, "kb_view", None):
-            return
-        self.renderer = lightfx.Renderer(self.profile.lighting, self.dev.per_key.zones if self.dev.per_key else None,
-                                         len(self.dev.rgb.zones) if self.dev.rgb else 1)
-        self._t0 = GLib.get_monotonic_time() / 1e6
-        if self.light_state == "onboard" and not self.dirty:
-            self.kb_view.set_colors(self.renderer.frame(0.0))
-            return
-
-        def tick():
-            if self.stack.get_visible_child_name() == "lighting":
-                self.kb_view.set_colors(self.renderer.frame(GLib.get_monotonic_time() / 1e6 - self._t0))
-            return True
-
-        tick()
-        if self.renderer.is_animated():
-            self._preview_source = GLib.timeout_add(66, tick)
-
     def _stop_preview(self):
-        src = getattr(self, "_preview_source", None)
-        if src:
-            GLib.source_remove(src)
+        if self._preview_source:
+            GLib.source_remove(self._preview_source)
             self._preview_source = None
 
     def lighting_changed(self, dirty: bool = True):
+        """Mouse lighting zones: changes show on the mouse right away."""
         if dirty:
             self.mark_dirty()
-        self._start_preview()
         if self.light_state == "service":
-            return  # the service owns the keyboard; it picks the change up when the profile is saved
+            return  # the service owns the device; it picks the change up when the profile is saved
         if self.light_state != "app":
             self.light_state = "app"
-            self.build_lighting_later()
+            GLib.idle_add(lambda: self.build_lighting() and False)
         if getattr(self, "_apply_pending", None):
             GLib.source_remove(self._apply_pending)
         self._apply_pending = GLib.timeout_add(200, self._apply_live)
@@ -1192,12 +961,11 @@ class DevicePane(Gtk.Box):
         dev = self.dev
 
         def work():
-            old = getattr(self, "animator", None)
+            old = self.animator
             if old:
                 old.stop()
                 old.join(timeout=1)
-            claimed = getattr(self, "_claimed", False)
-            anim = lightfx.apply(dev, light, claim=not claimed)
+            anim = lightfx.apply(dev, light, claim=not self._claimed)
             self._claimed = True
             return anim
 
@@ -1210,24 +978,29 @@ class DevicePane(Gtk.Box):
         run_async(lambda: self.dev.brightness.set(value), None, self.fail)
 
     def stop_lighting(self):
-        anim = getattr(self, "animator", None)
-        if anim:
-            anim.stop()
+        if self.animator:
+            self.animator.stop()
             self.animator = None
         self._stop_preview()
 
-    def release_lighting(self):
+    def release_lighting(self, note: str = ""):
         self.stop_lighting()
+
+        fallback = getattr(self, "stored_active", None)
 
         def work():
             if self.dev.rgb:
                 self.dev.rgb.release()
+            if fallback and self.dev.has(F.PROFILE_MANAGEMENT):  # as G HUB does: re-select the fallback profile
+                from ..features.profile_fs import ProfileFS
+
+                ProfileFS(self.dev.hidpp).select(fallback)
             lightfx.clear_applied(self.dev.key)
             self._claimed = False
 
         def done(_r):
             self.light_state = "onboard"
-            self.toast("Lighting handed back to the keyboard")
+            self.toast(" ".join(x for x in ("Lighting handed back.", note) if x))
             self.build_lighting()
 
         run_async(work, done, self.fail)
@@ -1247,11 +1020,67 @@ class DevicePane(Gtk.Box):
             r = Adw.ActionRow(title=title, subtitle=GLib.markup_escape_text(str(value)))
             r.add_css_class("property")
             g.add(r)
+        if self.dev.kind == "keyboard" and self.dev.hidpp is not None:
+            self._double_press_group()
         g2 = self.add_group("info", Adw.PreferencesGroup(title="HID++ features"))
         expander = Adw.ExpanderRow(title=f"{len(info.get('features', {}))} features")
         for name, idx in info.get("features", {}).items():
             expander.add_row(Adw.ActionRow(title=name, subtitle=f"index {idx}"))
         g2.add(expander)
+
+
+    def _double_press_group(self):
+        key = self.dev.key
+        s = chatter.load(key)
+        g = self.add_group("info", Adw.PreferencesGroup(
+            title="Double presses",
+            description="Worn or dusty switches sometimes type a key twice for one press. The logi-ghubd service can "
+                        "drop a second press that comes too soon after the key was let go. It works while the keyboard "
+                        "is connected to this computer, with or without Host mode, but not over Bluetooth to other "
+                        "devices: nothing can be stored on the keyboard to do this."))
+        on = Adw.SwitchRow(title="Block double presses", active=s.enabled)
+        ms = Adw.SpinRow.new_with_range(5, chatter.MAX_MS, 5)
+        ms.set_title("Drop a second press within")
+        ms.set_subtitle("milliseconds after the key was let go. Raise it if doubles still get through; lower it if "
+                        "quick double letters go missing.")
+        ms.set_value(s.threshold_ms)
+        ms.set_sensitive(s.enabled)
+
+        def save(*_):
+            s.enabled = on.get_active()
+            s.threshold_ms = int(ms.get_value())
+            try:
+                chatter.save(key, s)  # the service reads it again within a second or two
+            except OSError as e:
+                self.fail(e)
+
+        on.connect("notify::active", lambda *_: (save(), self.build_info()))
+        ms.connect("notify::value", save)
+        g.add(on)
+        g.add(ms)
+        if s.enabled:
+            problem = self.key_access_problem()
+            if not problem and not daemon_running() and not str(self.dev.info.path).startswith("fake:"):
+                problem = "The logi-ghubd service isn't running. Turn on “Run in the background at login” in the menu."
+            if problem:
+                warn = Adw.ActionRow(title="Not blocking yet", subtitle=GLib.markup_escape_text(problem))
+                warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
+                g.add(warn)
+        stats = chatter.load_stats().get(key, {})
+        blocked = sorted(((n, e) for n, e in stats.items() if e.get("blocked")), key=lambda x: -x[1]["blocked"])
+        if blocked:
+            exp = Adw.ExpanderRow(title=f"{sum(e['blocked'] for _, e in blocked)} double presses blocked",
+                                  subtitle="by key, with how soon after the key was let go they came")
+            for name, e in blocked:
+                text = f"{e['blocked']} blocked, {e['blocked_min_ms']:g} to {e['blocked_max_ms']:g} ms"
+                if e.get("close"):
+                    text += f" · {e['close']} let through near the limit (closest {e['close_min_ms']:g} ms)"
+                exp.add_row(Adw.ActionRow(title=GLib.markup_escape_text(layout_label(name)), subtitle=text))
+            g.add(exp)
+            reset = Gtk.Button(label="Reset counts", valign=Gtk.Align.CENTER)
+            reset.add_css_class("flat")
+            reset.connect("clicked", lambda *_: (chatter.reset_stats(key), chatter.save(key, s), self.build_info()))
+            g.set_header_suffix(reset)
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -1334,14 +1163,7 @@ class MainWindow(Adw.ApplicationWindow):
             d.close()
         self.panes.clear()
 
-        def find():
-            if self.fake:
-                from ..hidpp.fake import fake_devices
-
-                return fake_devices()
-            return find_devices()
-
-        run_async(find, self.found, lambda e: self.toast(f"Error: {e}"))
+        run_async(lambda: discover(self.fake), self.found, lambda e: self.toast(f"Error: {e}"))
 
     def found(self, devices: list[LogiDevice]):
         self.devices = devices
@@ -1374,7 +1196,7 @@ class MainWindow(Adw.ApplicationWindow):
     def on_select(self, _list, row):
         if row is None:
             return
-        dev: LogiDevice = row.get_child().dev if not hasattr(row, "dev") else row.dev
+        dev: LogiDevice = row.dev
         if not dev.online:
             self.status.set_title(f"{dev.name} is not reachable")
             self.status.set_description(dev.error or "")

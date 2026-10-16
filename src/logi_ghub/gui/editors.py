@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Adw, Gtk
 
 from .. import keys
 from ..actions import SPECIALS, Action

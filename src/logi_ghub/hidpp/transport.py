@@ -57,7 +57,7 @@ class HidrawInfo:
         return f"{self.vid:04x}:{self.pid:04x}"
 
 
-def _report_ids(descriptor: bytes) -> frozenset[int]:
+def report_ids(descriptor: bytes) -> frozenset[int]:
     """Collect the HID report IDs declared by a report descriptor.
 
     Walks the short items of the descriptor; Report ID is global item tag 0x85.
@@ -80,71 +80,81 @@ def _report_ids(descriptor: bytes) -> frozenset[int]:
     return frozenset(ids)
 
 
-def _read(path: Path) -> str:
-    try:
-        return path.read_text()
-    except OSError:
-        return ""
-
-
 def _uevent(path: Path) -> dict[str, str]:
-    out = {}
-    for line in _read(path).splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            out[k] = v
-    return out
+    try:
+        text = path.read_text()
+    except OSError:
+        return {}
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+
+@dataclass(frozen=True)
+class HidrawNode:
+    """One entry of /sys/class/hidraw, with what its uevent and report descriptor say."""
+
+    name: str  # e.g. hidraw3
+    bus: int
+    vid: int
+    pid: int
+    driver: str
+    report_ids: frozenset[int]
+    uevent: dict[str, str]
+
+    def info(self, dev_root: str = "/dev") -> HidrawInfo:
+        return HidrawInfo(
+            path=f"{dev_root}/{self.name}",
+            name=self.uevent.get("HID_NAME", "Logitech device"),
+            vid=self.vid,
+            pid=self.pid,
+            bus=self.bus,
+            driver=self.driver,
+            report_ids=self.report_ids,
+            phys=self.uevent.get("HID_PHYS", ""),
+        )
+
+
+def _node_number(path: Path) -> int:
+    suffix = path.name[6:]
+    return int(suffix) if suffix.isdigit() else 0
+
+
+def hidraw_nodes(sys_root: Path = SYS_HIDRAW, vid: int = LOGITECH_VID):
+    """Yield the hidraw nodes of one vendor whose report descriptor can be read, in node order."""
+    if not sys_root.exists():
+        return
+    for node in sorted(sys_root.iterdir(), key=_node_number):
+        dev = node / "device"
+        ue = _uevent(dev / "uevent")
+        try:
+            bus, node_vid, pid = (int(x, 16) for x in ue.get("HID_ID", "").split(":"))
+        except ValueError:
+            continue
+        if node_vid != vid:
+            continue
+        try:
+            driver = os.path.basename(os.readlink(dev / "driver"))
+        except OSError:
+            driver = ""
+        try:
+            ids = report_ids((dev / "report_descriptor").read_bytes())
+        except OSError:
+            continue
+        yield HidrawNode(node.name, bus, node_vid, pid, driver, ids, ue)
 
 
 def enumerate_hidpp(sys_root: Path = SYS_HIDRAW, dev_root: str = "/dev") -> list[HidrawInfo]:
-    """Return hidraw nodes of Logitech devices that accept HID++ 2.0 long reports.
+    """Return hidraw nodes of Logitech devices that accept HID++ 2.0 reports.
 
     Receivers themselves are skipped: with the kernel's logitech-dj driver
     loaded every paired device gets its own hidraw node (driver
     ``logitech-hidpp-device``), and the driver rewrites the device index of
     reports written to it, so talking to that node is simplest.
     """
-    found: list[HidrawInfo] = []
-    if not sys_root.exists():
-        return found
-    for node in sorted(sys_root.iterdir(), key=lambda p: int(p.name[6:]) if p.name[6:].isdigit() else 0):
-        dev = node / "device"
-        ue = _uevent(dev / "uevent")
-        hid_id = ue.get("HID_ID", "")
-        try:
-            bus_s, vid_s, pid_s = hid_id.split(":")
-            bus, vid, pid = int(bus_s, 16), int(vid_s, 16), int(pid_s, 16)
-        except ValueError:
-            continue
-        if vid != LOGITECH_VID:
-            continue
-        driver = ""
-        try:
-            driver = os.path.basename(os.readlink(dev / "driver"))
-        except OSError:
-            pass
-        if driver == "logitech-djreceiver":
-            continue
-        try:
-            descriptor = (dev / "report_descriptor").read_bytes()
-        except OSError:
-            continue
-        ids = _report_ids(descriptor)
-        if REPORT_LONG not in ids and REPORT_SHORT not in ids:
-            continue
-        found.append(
-            HidrawInfo(
-                path=f"{dev_root}/{node.name}",
-                name=ue.get("HID_NAME", "Logitech device"),
-                vid=vid,
-                pid=pid,
-                bus=bus,
-                driver=driver,
-                report_ids=ids,
-                phys=ue.get("HID_PHYS", ""),
-            )
-        )
-    return found
+    return [
+        node.info(dev_root)
+        for node in hidraw_nodes(sys_root)
+        if node.driver != "logitech-djreceiver" and node.report_ids & {REPORT_SHORT, REPORT_LONG}
+    ]
 
 
 class HidrawTransport:

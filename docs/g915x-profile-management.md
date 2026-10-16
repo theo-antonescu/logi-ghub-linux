@@ -47,6 +47,28 @@ type 1 returns their names and UUIDs. G HUB never reads the animation frames bac
   colours. Setting the zone to the fixed effect (not persisted) stops it; the animation may still
   finish its current frame.
 
+## Writing profiles (implemented in `ProfileFS.write_profile`)
+
+Recorded while G HUB, in on-board memory mode, rewrote profile 2 three times (2026-10-15):
+
+* fn 2 `size_hi size_lo 00` starts a write; fn 3 sends 16 data bytes per call (the reply counts
+  the chunks); fn 7 `00 file size_hi size_lo crc32` commits it to bank 0.
+* A profile file's crc32 (zlib) covers the whole 0x63 bytes. The directory then gets rewritten:
+  `crc32 count` then `number 81 01 40 63 crc32 file` per profile and `ff`; its first 4 bytes are the
+  crc32 of the rest, which is also the crc its fn 7 commit carries.
+* In on-board memory mode G HUB writes its own inactivity timers into the profile (bytes 2..5)
+  and repeats the full-power effect as the power-save effect.
+* fn 2 `00 02 00`, fn 3 `00 00 00` then fn 9 `1b 05 …` write a 2-byte key-customisation table.
+
+## Custom animation slots
+
+DFU fn 4 `03 01 "RGB_V0000"` uploads to brightness + 8 and `04 01 "RGB_V0000"` to brightness + 9
+(`04 00 …` is refused with status 0x93). Header bytes 6-7 are the file's size in 256-byte units
+(plus 32 bytes). Measured on 2026-10-15: each slot takes up to 400 units, 102432 bytes, whatever the
+other slot holds; 401 units is refused at the first packet with status 0x9a. G HUB's "Effects on device → Replace effect" uses these uploads.
+
+The 0x8071 fn 3 cap-1 setting is the device startup effect: `type primary(3) secondary(3)`.
+
 ## Writing (seen, not implemented)
 
 G HUB also sent these while starting up; their exact meaning is not known yet:

@@ -21,7 +21,9 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 from . import profiles  # noqa: E402
-from .device import find_devices  # noqa: E402
+from .autostart import daemon_running  # noqa: E402
+from .device import discover  # noqa: E402
+from .features.onboard import MODE_ONBOARD  # noqa: E402
 
 log = logging.getLogger("logi-ghub-tray")
 
@@ -294,12 +296,7 @@ class Tray:
 
     # -- device polling (background thread) -------------------------------------------------
     def refresh(self) -> None:
-        if self.fake:
-            from .hidpp.fake import fake_devices
-
-            devs = fake_devices()
-        else:
-            devs = find_devices()
+        devs = discover(self.fake)
         seen = set()
         for d in devs:
             if d.hidpp is not None:
@@ -315,7 +312,7 @@ class Tray:
                     st.charging = bool(b and b.charging in ("charging", "charging slowly"))
                     if d.onboard:
                         slots = d.onboard.read_profiles()
-                        st.slots = [(p.sector, getattr(p, "display_name", "") or f"Slot {p.sector}") for p in slots if p.enabled]
+                        st.slots = [(p.sector, p.display_name) for p in slots if p.enabled]
                         st.active_slot = d.onboard.get_current_profile()
                 except Exception as e:  # noqa: BLE001 - devices fall asleep mid-read
                     log.debug("%s: %s", d.name, e)
@@ -348,11 +345,11 @@ class Tray:
     # -- actions ---------------------------------------------------------------------------
     def select_slot(self, key: str, slot: int) -> None:
         def work():
-            devs = find_devices()
+            devs = discover(self.fake)
             try:
                 for d in devs:
                     if d.key == key and d.online and d.onboard:
-                        d.onboard.set_mode(1)
+                        d.onboard.set_mode(MODE_ONBOARD)
                         d.onboard.set_current_profile(slot)
             finally:
                 for d in devs:
@@ -365,7 +362,7 @@ class Tray:
 
     def set_host(self, key: str, name: str | None) -> None:
         profiles.set_active(key, name)
-        if name and not service_running():
+        if name and not daemon_running():
             notify("logi-ghubd is not running", "Host-mode profiles need it: systemctl --user enable --now logi-ghubd")
         self.rebuild()
 
@@ -377,13 +374,6 @@ class Tray:
     def run(self) -> None:
         threading.Thread(target=self.poll_forever, daemon=True).start()
         self.loop.run()
-
-
-def service_running() -> bool:
-    try:
-        return subprocess.run(["systemctl", "--user", "is-active", "--quiet", "logi-ghubd"], timeout=5).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
 
 
 def notify(title: str, body: str) -> None:

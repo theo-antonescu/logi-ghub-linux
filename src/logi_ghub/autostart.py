@@ -1,4 +1,4 @@
-"""Starting the panel icon and the logi-ghubd service at login."""
+"""Starting the panel icon and the logi-ghubd service at login, and telling whether they run."""
 
 from __future__ import annotations
 
@@ -17,8 +17,7 @@ def _autostart_file() -> Path:
 
 
 def _tray_command() -> str:
-    exe = shutil.which("logi-ghub-tray") or str(Path.home() / ".local" / "bin" / "logi-ghub-tray")
-    return exe
+    return shutil.which("logi-ghub-tray") or str(Path.home() / ".local" / "bin" / "logi-ghub-tray")
 
 
 def _systemctl(*args: str) -> bool:
@@ -33,8 +32,7 @@ def is_enabled() -> bool:
 
 
 def service_installed() -> bool:
-    unit = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "systemd" / "user" / "logi-ghubd.service"
-    return unit.exists()
+    return (config_dir().parent / "systemd" / "user" / "logi-ghubd.service").exists()
 
 
 def set_enabled(on: bool) -> list[str]:
@@ -62,14 +60,54 @@ def set_enabled(on: bool) -> list[str]:
     return problems
 
 
-def tray_running() -> bool:
+def process_running(*needles: bytes) -> bool:
+    """True if a process's command line (arguments joined by spaces) contains one of ``needles``."""
     for pid in os.listdir("/proc"):
         if not pid.isdigit():
             continue
         try:
-            cmd = Path(f"/proc/{pid}/cmdline").read_bytes()
+            cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
         except OSError:
             continue
-        if b"logi-ghub-tray" in cmd or b"logi_ghub.tray" in cmd:
+        if any(n in cmd for n in needles):
             return True
     return False
+
+
+def tray_running() -> bool:
+    return process_running(b"logi-ghub-tray", b"logi_ghub.tray")
+
+
+def daemon_running() -> bool:
+    """The logi-ghubd service, or the daemon started by hand (python -m, logi-ghub-cli daemon)."""
+    return process_running(b"logi-ghubd", b"logi_ghub.daemon", b"logi-ghub-cli daemon")
+
+
+# OpenRGB's SDK server, which the whole-computer sync talks to
+OPENRGB_UNIT = "openrgb-server.service"
+
+
+def openrgb_unit_path() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "systemd" / "user" / OPENRGB_UNIT
+
+
+def set_openrgb(on: bool) -> list[str]:
+    """Run OpenRGB's server in the background at login (or stop doing so)."""
+    exe = shutil.which("openrgb")
+    if on and exe is None:
+        return ["OpenRGB isn't installed (sudo apt install openrgb)"]
+    unit = openrgb_unit_path()
+    if on:
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text(
+            "[Unit]\nDescription=OpenRGB SDK server (for logi-ghub-linux's whole-computer sync)\n"
+            "After=graphical-session.target\n\n"
+            f"[Service]\nExecStart={exe} --server --noautoconnect\nRestart=on-failure\nRestartSec=5\n\n"
+            "[Install]\nWantedBy=graphical-session.target\n"
+        )
+        _systemctl("daemon-reload")
+        if not _systemctl("enable", "--now", OPENRGB_UNIT):
+            return ["couldn't start OpenRGB's server"]
+        return []
+    _systemctl("disable", "--now", OPENRGB_UNIT)
+    return []

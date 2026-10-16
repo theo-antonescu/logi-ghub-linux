@@ -26,7 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..actions import Action
-from ..hidpp.transport import HidrawInfo, _report_ids, _uevent
+from ..device import BaseDevice
+from ..hidpp.transport import SYS_HIDRAW, HidrawInfo, hidraw_nodes
 
 VID, PID = 0x046D, 0xC24A
 REPORT_ACTIVE = 0xF0
@@ -342,32 +343,26 @@ class G600ReportRate:
         raise ValueError("the G600's report rate is part of its profiles; change it there")
 
 
-class G600Device:
-    """Duck-types LogiDevice for the GUI, CLI and profile code."""
+class G600Device(BaseDevice):
+    """A G600: on-board profiles, DPI and report rate through feature reports; nothing else."""
 
     kind = "mouse"
-    hidpp = None
-    rgb = per_key = brightness = button_spy = gkeys = None
-    model_ids: list[int] = []
 
     def __init__(self, info: HidrawInfo):
-        self.info = info
+        super().__init__(info)
         self.name = "G600"
-        self.online = False
-        self.error: str | None = None
-        self.onboard: G600Memory | None = None
-        self.dpi = self.report_rate = None
 
-    @property
-    def key(self) -> str:
-        return self.info.key
+    def attach(self, memory: G600Memory) -> "G600Device":
+        self.onboard = memory
+        self.dpi = G600Dpi(memory)
+        self.report_rate = G600ReportRate(memory)
+        return self
 
     def open(self) -> "G600Device":
         try:
-            self.onboard = G600Memory(self.info.path)
-            self.onboard.active()
-            self.dpi = G600Dpi(self.onboard)
-            self.report_rate = G600ReportRate(self.onboard)
+            memory = G600Memory(self.info.path)
+            memory.active()
+            self.attach(memory)
             self.online = True
         except OSError as e:
             self.error = str(e)
@@ -379,54 +374,18 @@ class G600Device:
             self.onboard.close()
             self.onboard = None
 
-    def has(self, feature_id: int) -> bool:
-        return False
-
-    def battery(self):
-        return None
-
-    def firmware(self):
-        return []
-
-    def button_name(self, index: int) -> str:
-        return BUTTON_NAMES[index] if index < len(BUTTON_NAMES) else f"Button {index + 1}"
+    def button_names(self) -> list[str]:
+        return BUTTON_NAMES
 
     def binding_count(self) -> int:
         return BUTTONS
 
     def describe(self) -> dict:
-        out = {"name": self.name, "model": self.key, "path": self.info.path, "kind": self.kind, "online": self.online,
-               "protocol": "HID feature reports (pre-HID++ G600)", "features": {}, "firmware": []}
-        if not self.online:
-            out["error"] = self.error
-        return out
+        return {**super().describe(), "protocol": "HID feature reports (pre-HID++ G600)", "features": {}, "firmware": []}
 
 
-def enumerate_g600(sys_root: Path = Path("/sys/class/hidraw")) -> list[HidrawInfo]:
-    found = []
-    if not sys_root.exists():
-        return found
-    for node in sorted(sys_root.iterdir()):
-        dev = node / "device"
-        ue = _uevent(dev / "uevent")
-        try:
-            bus, vid, pid = (int(x, 16) for x in ue.get("HID_ID", "").split(":"))
-        except ValueError:
-            continue
-        if (vid, pid) != (VID, PID):
-            continue
-        try:
-            ids = _report_ids((dev / "report_descriptor").read_bytes())
-        except OSError:
-            continue
-        if REPORT_ACTIVE in ids:
-            found.append(HidrawInfo(f"/dev/{node.name}", ue.get("HID_NAME", "Logitech G600"), vid, pid, bus,
-                                    "hid-generic", ids, ue.get("HID_PHYS", "")))
-    return found
-
-
-def save_backup_json(memory: G600Memory, path: Path) -> None:
-    path.write_text(json.dumps(memory.backup(), indent=1))
+def enumerate_g600(sys_root: Path = SYS_HIDRAW) -> list[HidrawInfo]:
+    return [node.info() for node in hidraw_nodes(sys_root, VID) if node.pid == PID and REPORT_ACTIVE in node.report_ids]
 
 
 class FakeG600Memory(G600Memory):
@@ -463,10 +422,7 @@ class FakeG600Memory(G600Memory):
 
 def fake_g600() -> G600Device:
     info = HidrawInfo("fake:g600", "Logitech G600 (simulated)", VID, PID, 3, "fake", frozenset({REPORT_ACTIVE}), "fake")
-    dev = G600Device(info)
-    dev.onboard = FakeG600Memory()
-    dev.dpi = G600Dpi(dev.onboard)
-    dev.report_rate = G600ReportRate(dev.onboard)
+    dev = G600Device(info).attach(FakeG600Memory())
     dev.name = "G600 (simulated)"
     dev.online = True
     return dev

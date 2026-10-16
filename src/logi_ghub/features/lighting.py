@@ -42,7 +42,15 @@ EFFECTS: dict[int, tuple[str, dict[str, int]]] = {
 }
 PARAM_SIZES = {"color": 3, "speed": 1, "period": 2, "intensity": 1, "ramp": 1, "form": 1, "saturation": 1, "direction": 1}
 DIRECTIONS = {0: "Cycle", 1: "Right", 2: "Down", 3: "Center out", 4: "In", 5: "Out", 6: "Left", 7: "Up", 8: "Center in"}
-DEFAULTS = {"period": 5000, "intensity": 100, "saturation": 255, "speed": 10, "ramp": 0, "form": 0, "direction": 1}
+
+
+def effect_name(effect_id: int) -> str:
+    return EFFECTS[effect_id][0] if effect_id in EFFECTS else f"Effect {effect_id:#04x}"
+
+
+def effect_params(effect_id: int) -> dict[str, int]:
+    """Parameter name -> offset in the 10 parameter bytes (empty for unknown effects)."""
+    return EFFECTS[effect_id][1] if effect_id in EFFECTS else {}
 
 
 @dataclass
@@ -54,11 +62,11 @@ class EffectInfo:
 
     @property
     def name(self) -> str:
-        return EFFECTS.get(self.effect_id, (f"Effect {self.effect_id:#04x}", {}))[0]
+        return effect_name(self.effect_id)
 
     @property
     def params(self) -> list[str]:
-        return list(EFFECTS.get(self.effect_id, ("", {}))[1])
+        return list(effect_params(self.effect_id))
 
 
 @dataclass
@@ -91,14 +99,14 @@ class Effect:
 
     def params_bytes(self) -> bytes:
         b = bytearray(10)
-        for p, off in EFFECTS.get(self.effect_id, ("", {}))[1].items():
+        for p, off in effect_params(self.effect_id).items():
             size = PARAM_SIZES[p]
             b[off : off + size] = int(getattr(self, p)).to_bytes(size, "big")
         return bytes(b)
 
     def to_dict(self) -> dict:
         d = {"effect": self.effect_id}
-        for p in EFFECTS.get(self.effect_id, ("", {}))[1]:
+        for p in effect_params(self.effect_id):
             d[p] = getattr(self, p)
         return d
 
@@ -112,20 +120,45 @@ class Effect:
 
     @property
     def name(self) -> str:
-        return EFFECTS.get(self.effect_id, (f"Effect {self.effect_id:#04x}", {}))[0]
+        return effect_name(self.effect_id)
 
 
-class RGBEffects:
-    """0x8071. The host must claim software control before its effects stick."""
+class ZoneEffects:
+    """Lighting zones that each run one firmware effect (0x8070 and 0x8071 share this model)."""
 
-    FLAG_NVCONFIG = 0x04
+    FEATURE: int
+    SET_EFFECT: int  # function number of setZoneEffect
 
     def __init__(self, dev: Device):
         self.dev = dev
+        self.zones: list[Zone] = []
+
+    def claim(self) -> None:
+        raise NotImplementedError
+
+    def release(self) -> None:
+        raise NotImplementedError
+
+    def set_effect(self, zone: int, effect: Effect, persist: bool = True) -> None:
+        info = self.zones[zone].effect_by_id(effect.effect_id)
+        if info is None:
+            raise ValueError(f"zone {zone} does not support {effect.name}")
+        self.dev.call(self.FEATURE, self.SET_EFFECT, zone, info.index, effect.params_bytes(), 0x01 if persist else 0x00)
+
+
+class RGBEffects(ZoneEffects):
+    """0x8071. The host must claim software control before its effects stick."""
+
+    FEATURE = F.RGB_EFFECTS
+    SET_EFFECT = 0x1
+    FLAG_POWER = 0x02
+    FLAG_NVCONFIG = 0x04
+
+    def __init__(self, dev: Device):
+        super().__init__(dev)
         info = dev.call(F.RGB_EFFECTS, 0x0, 0xFF, 0xFF, 0x00)
         self.zone_count = info[2]
         self.nv_caps, self.ext_caps = struct.unpack(">HH", info[3:7])
-        self.zones: list[Zone] = []
         for z in range(self.zone_count):
             zi = dev.call(F.RGB_EFFECTS, 0x0, z, 0xFF, 0x00)
             location = struct.unpack(">H", zi[2:4])[0]
@@ -140,8 +173,6 @@ class RGBEffects:
     def get_sw_control(self) -> tuple[int, int]:
         d = self.dev.call(F.RGB_EFFECTS, 0x5, 0x00)
         return d[1], d[2]
-
-    FLAG_POWER = 0x02
 
     def claim(self) -> None:
         """Take lighting over from the firmware (what G HUB does while running).
@@ -188,11 +219,6 @@ class RGBEffects:
             return None
         return bool(msg.data[0])
 
-    def set_effect(self, zone: int, effect: Effect, persist: bool = True) -> None:
-        info = self.zones[zone].effect_by_id(effect.effect_id)
-        if info is None:
-            raise ValueError(f"zone {zone} does not support {effect.name}")
-        self.dev.call(F.RGB_EFFECTS, 0x1, zone, info.index, effect.params_bytes(), 0x01 if persist else 0x00)
 
     def hold_static(self, color: int = 0, skip=()) -> None:
         """Put zones on a fixed colour so per-key colours stick (zones in ``skip`` keep their effect).
@@ -206,14 +232,16 @@ class RGBEffects:
         time.sleep(0.1)  # a stored animation finishes its current frame first
 
 
-class ColorLedEffects:
+class ColorLedEffects(ZoneEffects):
     """0x8070, the older zone effect feature."""
 
+    FEATURE = F.COLOR_LED_EFFECTS
+    SET_EFFECT = 0x3
+
     def __init__(self, dev: Device):
-        self.dev = dev
+        super().__init__(dev)
         info = dev.call(F.COLOR_LED_EFFECTS, 0x0)
         self.zone_count = info[0]
-        self.zones: list[Zone] = []
         for z in range(self.zone_count):
             zi = dev.call(F.COLOR_LED_EFFECTS, 0x1, z)
             location = struct.unpack(">H", zi[1:3])[0]
@@ -229,12 +257,6 @@ class ColorLedEffects:
 
     def release(self) -> None:
         self.dev.call(F.COLOR_LED_EFFECTS, 0x8, 0x00)
-
-    def set_effect(self, zone: int, effect: Effect, persist: bool = True) -> None:
-        info = self.zones[zone].effect_by_id(effect.effect_id)
-        if info is None:
-            raise ValueError(f"zone {zone} does not support {effect.name}")
-        self.dev.call(F.COLOR_LED_EFFECTS, 0x3, zone, info.index, effect.params_bytes(), 0x01 if persist else 0x00)
 
 
 class PerKeyLighting:
@@ -308,12 +330,4 @@ def zone_for_hid(usage: int) -> int | None:
         return usage - 3
     if 0xE0 <= usage <= 0xE7:
         return usage - 120
-    return None
-
-
-def hid_for_zone(zone: int) -> int | None:
-    if 1 <= zone <= 0x62:
-        return zone + 3
-    if 104 <= zone <= 111:
-        return zone + 120
     return None
