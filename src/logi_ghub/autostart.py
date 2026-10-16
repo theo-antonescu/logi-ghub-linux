@@ -73,3 +73,33 @@ def tray_running() -> bool:
         if b"logi-ghub-tray" in cmd or b"logi_ghub.tray" in cmd:
             return True
     return False
+
+
+# OpenRGB's SDK server, which the whole-computer sync talks to
+OPENRGB_UNIT = "openrgb-server.service"
+
+
+def openrgb_unit_path() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "systemd" / "user" / OPENRGB_UNIT
+
+
+def set_openrgb(on: bool) -> list[str]:
+    """Run OpenRGB's server in the background at login (or stop doing so)."""
+    exe = shutil.which("openrgb")
+    if on and exe is None:
+        return ["OpenRGB isn't installed (sudo apt install openrgb)"]
+    unit = openrgb_unit_path()
+    if on:
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text(
+            "[Unit]\nDescription=OpenRGB SDK server (for logi-ghub-linux's whole-computer sync)\n"
+            "After=graphical-session.target\n\n"
+            f"[Service]\nExecStart={exe} --server --noautoconnect\nRestart=on-failure\nRestartSec=5\n\n"
+            "[Install]\nWantedBy=graphical-session.target\n"
+        )
+        _systemctl("daemon-reload")
+        if not _systemctl("enable", "--now", OPENRGB_UNIT):
+            return ["couldn't start OpenRGB's server"]
+        return []
+    _systemctl("disable", "--now", OPENRGB_UNIT)
+    return []

@@ -22,7 +22,7 @@ SKIP_KINDS = {"Keyboard", "Mouse"}  # the app drives Logitech devices itself
 # blue looks pink); a gamma curve makes their colours match the keyboard's
 GAMMA = {"DRAM": 2.2, "GPU": 2.2}
 # white balance per device (red, green, blue multipliers): older LEDs drift towards yellow
-BALANCE = {"Kraken": (0.68, 0.76, 1.0)}
+BALANCE = {"Kraken": (0.6, 0.7, 1.0)}
 
 
 def balance_for(name: str) -> tuple[float, float, float]:
@@ -69,18 +69,17 @@ class CaseLights(threading.Thread):
         renderer = self.design.renderer()
         try:
             with OpenRGB(self.host) as o:
-                for c in o.controllers():
-                    if c.kind in SKIP_KINDS or not c.led_count:
-                        continue
-                    if "Direct" in c.modes:
-                        o.set_mode(c, "Direct")
-                    else:
-                        o.set_custom_mode(c.index)
-                    self.devices.append((c, key_strip(c.led_count)))
-                log.info("case lighting on %s", ", ".join(c.name for c, _ in self.devices))
                 last: dict[int, list[int]] = {}
+                count, checked = -1, 0.0
                 while not self.stop_event.is_set():
                     started = time.monotonic()
+                    if started - checked > 5:  # OpenRGB finds devices one by one after it starts
+                        checked = started
+                        now = o.controller_count()
+                        if now != count:
+                            count = now
+                            self._take_over(o)
+                            last.clear()
                     frame = {} if self.dark.is_set() else renderer.frame(started - self.t0)
                     for c, zones in self.devices:
                         g = GAMMA.get(c.kind, 1.0)
@@ -91,6 +90,18 @@ class CaseLights(threading.Thread):
                     self.stop_event.wait(max(0.0, 1 / self.fps - (time.monotonic() - started)))
         except (OSError, ConnectionError) as e:
             log.warning("case lighting stopped: %s (is OpenRGB running with its SDK server on?)", e)
+
+    def _take_over(self, o: OpenRGB) -> None:
+        self.devices = []
+        for c in o.controllers():
+            if c.kind in SKIP_KINDS or not c.led_count:
+                continue
+            if "Direct" in c.modes:
+                o.set_mode(c, "Direct")
+            else:
+                o.set_custom_mode(c.index)
+            self.devices.append((c, key_strip(c.led_count)))
+        log.info("case lighting on %s", ", ".join(c.name for c, _ in self.devices))
 
     def stop(self) -> None:
         self.stop_event.set()

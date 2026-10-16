@@ -360,6 +360,20 @@ class Daemon:
         self.runner = MacroRunner(self.vinput)
         self._active_mtime = 0.0
         self._last_scan = 0.0
+        from .sync import SyncPlayer
+
+        self.sync = SyncPlayer(self._sync_keyboard)
+        self._last_sync = 0.0
+
+    def _sync_keyboard(self) -> LogiDevice | None:
+        """A keyboard with per-key lighting for the whole-computer sync, unless a host profile is using it."""
+        found = None
+        for dev in self._devices():
+            if found is None and dev.online and dev.per_key and dev.key not in self.sessions:
+                found = dev
+            else:
+                dev.close()
+        return found
 
     def _devices(self) -> list[LogiDevice]:
         if self.fake:
@@ -424,6 +438,12 @@ class Daemon:
                 self._active_mtime = mtime
                 self._last_scan = now
                 self.scan()
+            if now - self._last_sync >= 1.0:
+                self._last_sync = now
+                try:
+                    self.sync.tick()
+                except Exception as e:  # noqa: BLE001 - the sync must never take the daemon down
+                    log.warning("sync: %s", e)
             try:
                 item = self.events.get(timeout=1.0)
             except queue.Empty:
@@ -448,6 +468,7 @@ class Daemon:
         self.shutdown()
 
     def shutdown(self) -> None:
+        self.sync.stop()
         self.runner.stop_all()
         for key in list(self.sessions):
             self.end(key)

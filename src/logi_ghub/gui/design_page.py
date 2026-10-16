@@ -141,7 +141,10 @@ class DesignLighting:
             row.add_suffix(scale)
             g.add(row)
 
-        # 4. what is stored on the keyboard
+        # 4. the rest of the computer
+        self._sync_group()
+
+        # 5. what is stored on the keyboard
         self._on_keyboard_group()
         self._show_design()
 
@@ -532,6 +535,96 @@ class DesignLighting:
 
         confirm(self.win, "Save to brightness + 9?",
                 f"This replaces “{current}” on the keyboard with “{d.name}”. Brightness + 8 is never changed.", "Save", go)
+
+    # -- the rest of the computer ------------------------------------------------------------------------------
+    def _sync_group(self):
+        from .. import sync
+
+        settings = sync.load()
+        g = self.add_group("lighting", Adw.PreferencesGroup(
+            title="Sync with the rest of the computer",
+            description="Plays a design on this keyboard and on every device OpenRGB can light (motherboard, RAM, "
+                        "graphics card, cooler…), in step, while you're logged in. Needs OpenRGB."))
+        on = Adw.SwitchRow(title="Sync", active=bool(settings["enabled"]))
+        g.add(on)
+        choices = [(k, t) for k, (t, _f) in presets.DESIGNS.items()] + [("profile", "This profile's design")]
+        current = (settings.get("design") or {}).get("name")
+        design_row = Adw.ComboRow(title="Design", model=Gtk.StringList.new([t for _k, t in choices]))
+        names = [t if k != "profile" else self.design.name for k, t in choices]
+        design_row.set_selected(names.index(current) if current in names else 0)
+        g.add(design_row)
+        off = Adw.SpinRow.new_with_range(0, 240, 1)
+        off.set_title("Turn every light off after")
+        off.set_subtitle("Minutes without keyboard or mouse use (0: never)")
+        off.set_value(round((settings.get("off_after") or 0) / 60))
+        g.add(off)
+        devices = Adw.ExpanderRow(title="Colour correction", subtitle="Per device, if its colours look off (100% = as is)")
+        g.add(devices)
+
+        def chosen_design() -> dict:
+            key = choices[design_row.get_selected()][0]
+            d = self.design if key == "profile" else presets.DESIGNS[key][1]()
+            return d.to_dict()
+
+        def write(*_):
+            settings.update(enabled=on.get_active(), design=chosen_design(), off_after=int(off.get_value()) * 60)
+            sync.save(settings)
+            if on.get_active():
+                self.run_async(self._sync_services, lambda problems: problems and self.toast("; ".join(problems)))
+
+        on.connect("notify::active", write)
+        design_row.connect("notify::selected", write)
+        off.connect("notify::value", write)
+
+        def found(controllers):
+            if controllers is None:
+                devices.set_subtitle("OpenRGB isn't running yet; turn Sync on to start it")
+                return
+            for c in controllers:
+                if c.kind in ("Keyboard", "Mouse") or not c.led_count:
+                    continue
+                from ..caselight import balance_for
+
+                bal = settings.get("balance", {}).get(c.name) or list(balance_for(c.name))
+                row = Adw.ActionRow(title=GLib.markup_escape_text(c.name), subtitle=c.kind)
+                for k, label in enumerate(("R", "G", "B")):
+                    spin = Gtk.SpinButton.new_with_range(0, 100, 5)
+                    spin.set_value(round(bal[k] * 100))
+                    spin.set_valign(Gtk.Align.CENTER)
+                    spin.set_tooltip_text(f"{label} %")
+
+                    def changed(sp, name=c.name, k=k, bal=bal):
+                        bal[k] = sp.get_value() / 100
+                        settings.setdefault("balance", {})[name] = list(bal)
+                        sync.save(settings)
+
+                    spin.connect("value-changed", changed)
+                    row.add_suffix(Gtk.Label(label=label, css_classes=["dim-label"]))
+                    row.add_suffix(spin)
+                devices.add_row(row)
+
+        def look():
+            from ..openrgb import OpenRGB
+
+            try:
+                with OpenRGB(timeout=1.5) as o:
+                    return o.controllers()
+            except OSError:
+                return None
+
+        self.run_async(look, found)
+
+    @staticmethod
+    def _sync_services() -> list[str]:
+        """OpenRGB's server and logi-ghubd, both started now and at login."""
+        from .. import autostart
+
+        problems = autostart.set_openrgb(True)
+        if not autostart.service_installed():
+            problems.append("the logi-ghubd service isn't installed; run scripts/install.sh")
+        elif not autostart._systemctl("enable", "--now", "logi-ghubd"):
+            problems.append("couldn't start the logi-ghubd service")
+        return problems
 
     # -- what the keyboard has stored ------------------------------------------------------------------------
     def _on_keyboard_group(self):

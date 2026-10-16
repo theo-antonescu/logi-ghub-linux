@@ -188,8 +188,11 @@ class OpenRGB:
                 # anything else (e.g. a device-list-changed notice) is skipped
 
     # -- API ---------------------------------------------------------------------------------
+    def controller_count(self) -> int:
+        return struct.unpack("<I", self._request(0, REQUEST_CONTROLLER_COUNT)[:4])[0]
+
     def controllers(self) -> list[Controller]:
-        count = struct.unpack("<I", self._request(0, REQUEST_CONTROLLER_COUNT)[:4])[0]
+        count = self.controller_count()
         out = []
         for i in range(count):
             data = self._request(i, REQUEST_CONTROLLER_DATA, struct.pack("<I", self.protocol))
