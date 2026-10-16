@@ -28,6 +28,7 @@ import time
 
 from . import layout
 from .config import data_dir
+from .design import _pack, lerp, scale
 from .features import lighting
 
 log = logging.getLogger(__name__)
@@ -43,28 +44,6 @@ PATTERNS = {
 LOGO_ZONE = lighting.SPECIAL_ZONES["Logo"]
 
 
-def default_animation() -> dict:
-    return {"enabled": False, "colors": [0xFF0000, 0x00FF00, 0x0000FF], "step_ms": 1000, "fade": True,
-            "pattern": "all", "keep_painted": True}
-
-
-def _rgb(c: int) -> tuple[float, float, float]:
-    return ((c >> 16) & 0xFF) / 255, ((c >> 8) & 0xFF) / 255, (c & 0xFF) / 255
-
-
-def _pack(r: float, g: float, b: float) -> int:
-    return (round(max(0, min(1, r)) * 255) << 16) | (round(max(0, min(1, g)) * 255) << 8) | round(max(0, min(1, b)) * 255)
-
-
-def lerp(a: int, b: int, t: float) -> int:
-    ra, ga, ba = _rgb(a)
-    rb, gb, bb = _rgb(b)
-    return _pack(ra + (rb - ra) * t, ga + (gb - ga) * t, ba + (bb - ba) * t)
-
-
-def scale(c: int, k: float) -> int:
-    r, g, b = _rgb(c)
-    return _pack(r * k, g * k, b * k)
 
 
 def hue(h: float) -> int:

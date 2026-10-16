@@ -68,7 +68,3 @@ class VirtualInput:
             finally:
                 os.close(self.fd)
                 self.fd = -1
-
-
-def key_code(name: str) -> int:
-    return keys.HID_TO_EVDEV[keys.hid_for(name)]

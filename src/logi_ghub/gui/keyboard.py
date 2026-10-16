@@ -99,13 +99,6 @@ class KeyboardView(Gtk.Widget):
         self._hit(ox + dx, oy + dy)
 
     # colours
-    def set_color(self, zone: int, rgb: int | None) -> None:
-        if rgb is None:
-            self.colors.pop(zone, None)
-        else:
-            self.colors[zone] = rgb
-        self.queue_draw()
-
     def set_selected(self, zones) -> None:
         zones = set(zones)
         if zones != self.selected:
