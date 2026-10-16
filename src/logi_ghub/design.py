@@ -285,7 +285,7 @@ def _canada(fx: float, fy: float) -> int:
     if fx < 0.25 or fx > 0.75:
         return FLAG_RED
     # the leaf fills most of the white square in the middle; the keyboard is about 2.8 times wider than tall
-    lx, ly = (fx - 0.33) / 0.34, (fy - 0.04) / 0.94
+    lx, ly = (fx - 0.31) / 0.32, (fy - 0.16) / 0.84  # a band of white all round it
     return FLAG_RED if 0 <= lx <= 1 and 0 <= ly <= 1 and _inside(lx, ly, MAPLE_LEAF) else FLAG_WHITE
 
 
