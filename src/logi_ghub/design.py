@@ -262,9 +262,9 @@ def _romania(fx: float, fy: float, name: str = "") -> int:
     return (0x0030FF, 0xFFC800, 0xFF0010)[min(2, int(fx * 3))]
 
 
-# The maple leaf, key by key (tip 5 6 7, arms R T Y U, body G H, stem B): at one LED per key a
+# The maple leaf, key by key (5 6 7 8, R T Y U I, F G H J, stem B): at one LED per key a
 # drawn outline comes out ragged, so the leaf is spelled out.
-MAPLE_LEAF_KEYS = {"5", "6", "7", "R", "T", "Y", "U", "G", "H", "B"}
+MAPLE_LEAF_KEYS = {"5", "6", "7", "8", "R", "T", "Y", "U", "I", "F", "G", "H", "J", "B"}
 
 
 def _canada(fx: float, fy: float, name: str = "") -> int:
