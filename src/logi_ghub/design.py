@@ -339,7 +339,8 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
     return scale(current(fx, fy, name), level)
 
 
-def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.22) -> float:
+def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14, slant: float = 0.22,
+           steps: int = 2) -> float:
     """Brightness 0-1 for a soft diagonal band dimming the keys to ``floor`` as it crosses from left to right.
 
     The band runs from bottom left to top right ("/"); ``slant`` is how far right its top is, as a share
@@ -355,7 +356,7 @@ def _sweep(fx: float, fy: float, phase: float, floor: float, width: float = 0.14
     if d >= 1:
         return 1.0
     dip = 0.5 + 0.5 * math.cos(math.pi * d)  # 1 in the middle of the band, 0 at its edges
-    return 1 - (1 - floor) * round(dip * 3) / 3
+    return 1 - (1 - floor) * round(dip * steps) / steps  # 2 steps: full, half way, floor
 
 
 def _frames_effect(layer: "Layer", name: str, t: float) -> int:
