@@ -333,9 +333,17 @@ def _flags_effect(layer: "Layer", fx: float, fy: float, t: float, name: str = ""
     current = flags[i]
     if within > 1 - wipe and fx < (within - (1 - wipe)) / wipe * 1.05:
         current = flags[(i + 1) % len(flags)]
-    # a few diagonal ripples (layer.spread of them, rounded) cross each flag from left to right
+    # a few diagonal ripples (layer.spread of them, rounded) cross each flag from left to right, each
+    # one entering before the one ahead of it has left
     ripples = max(1, round(layer.spread))
-    level = _sweep(fx, fy, (within / (1 - wipe) * ripples) % 1.0 if within < 1 - wipe else -1, layer.floor)
+    level = 1.0
+    if within < 1 - wipe:
+        frac = within / (1 - wipe)
+        length = min(1.0, 1.2 / ripples)  # each crossing takes this share of the flag's time
+        for k in range(ripples):
+            start = k * (1 - length) / max(1, ripples - 1)
+            if start <= frac < start + length:
+                level = min(level, _sweep(fx, fy, (frac - start) / length, layer.floor))
     return scale(current(fx, fy, name), level)
 
 
