@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 
 from .config import config_dir
@@ -53,6 +54,7 @@ class SyncPlayer:
         self.anim = None
         self.kb = None
         self.dark = False
+        self.handback = threading.Event()  # set when the brightness key is pressed on the keyboard
 
     # -- lifecycle ------------------------------------------------------------------------------
     def tick(self) -> None:
@@ -66,6 +68,8 @@ class SyncPlayer:
             self.stop()
             if self.settings["enabled"] and self.settings.get("design"):
                 self.start()
+        if self.handback.is_set():
+            self._hand_back_keyboard()
         if self.case is not None:
             if not self.case.is_alive():  # OpenRGB went away: try again on the next settings check
                 self.stop()
@@ -83,6 +87,7 @@ class SyncPlayer:
         if self.settings.get("keyboard", True):
             self.kb = self.open_keyboard()
             if self.kb is not None:
+                self.kb.hidpp.add_handler(self._keyboard_message)
                 try:
                     self.anim = lightfx.apply(self.kb, {"design": design.to_dict()})
                     if self.anim is not None:
@@ -116,6 +121,34 @@ class SyncPlayer:
             self.kb.close()
             self.kb = None
         self.dark = False
+        self.handback.clear()
+
+    # -- keyboard -------------------------------------------------------------------------------
+    def _keyboard_message(self, msg) -> None:
+        """The brightness key is the only key the keyboard reports while the sync owns its lighting.
+        Pressing it (as in brightness + 9) gives the keyboard back its own lighting."""
+        from .hidpp import features as F
+
+        if msg.swid == 0 and msg.function == 0 and msg.sub_id == self.kb.hidpp.features.get(F.BRIGHTNESS_CONTROL):
+            self.handback.set()
+
+    def _hand_back_keyboard(self) -> None:
+        """Stop playing on the keyboard (the rest of the computer keeps syncing) and remember it."""
+        self.handback.clear()
+        if self.anim is not None:
+            self.anim.stop()
+            self.anim = None
+        if self.kb is not None:
+            try:
+                self.kb.rgb.release()
+            except Exception:  # noqa: BLE001
+                pass
+            self.kb.close()
+            self.kb = None
+        self.settings["keyboard"] = False
+        save({**load(), "keyboard": False})
+        self.mtime = os.stat(settings_path()).st_mtime
+        log.info("sync: brightness key pressed, keyboard back on its own lighting")
 
     def _monitor(self) -> None:
         """Start the Alienware monitor's player when the monitor is (or comes back) on."""

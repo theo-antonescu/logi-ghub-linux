@@ -551,6 +551,10 @@ class DesignLighting:
         names = [t if k != "profile" else self.design.name for k, t in choices]
         design_row.set_selected(names.index(current) if current in names else 0)
         g.add(design_row)
+        kb = Adw.SwitchRow(title="Include this keyboard", active=bool(settings.get("keyboard", True)),
+                           subtitle="Pressing the keyboard's brightness key (e.g. brightness + 9) turns this off, "
+                                    "so you can pick its own lighting")
+        g.add(kb)
         off = Adw.SpinRow.new_with_range(0, 240, 1)
         off.set_title("Turn every light off after")
         off.set_subtitle("Minutes without keyboard or mouse use (0: never)")
@@ -565,13 +569,16 @@ class DesignLighting:
             return d.to_dict()
 
         def write(*_):
-            settings.update(enabled=on.get_active(), design=chosen_design(), off_after=int(off.get_value()) * 60)
+            settings.update(sync.load())  # the service may have changed it (the brightness key)
+            settings.update(enabled=on.get_active(), design=chosen_design(), off_after=int(off.get_value()) * 60,
+                            keyboard=kb.get_active())
             sync.save(settings)
             if on.get_active():
                 self.run_async(self._sync_services, lambda problems: problems and self.toast("; ".join(problems)))
 
         on.connect("notify::active", write)
         design_row.connect("notify::selected", write)
+        kb.connect("notify::active", write)
         off.connect("notify::value", write)
 
         def found(controllers):
