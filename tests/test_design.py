@@ -88,3 +88,16 @@ def test_rising_flags_alternate_by_row_and_move_up():
     assert [f0[z(k)] for k in ("Insert", "Home", "PageUp")] == list(design.FLAG_ROWS["canada"])
     f1 = r.frame(0.5)  # one step later each row shows the flag that was below it
     assert [f1[z(k)] for k in ("PrintScreen", "ScrollLock", "Pause")] == list(design.FLAG_ROWS["canada"])
+
+
+def test_raising_flags_alternate_countries():
+    keys = [k for col in presets.NAV_COLUMNS for k in col]
+    layer = design.Layer("r", keys, "raise", [], period_ms=6000, direction="right", floor=0.45, background=0x50B0FF,
+                         flags=["romania", "canada"])
+    r = design.Design("t", [layer]).renderer(ZONES)
+    z = layout.zone_of
+    ro, ca = r.frame(3.0), r.frame(9.0)  # mid-wave of the first and the second flag
+    assert ro[z("Insert")] & 0xFF > 0x80 and ro[z("PageUp")] >> 16 > 0x80  # blue left, red right
+    assert ca[z("Insert")] >> 16 > 0x80 and ca[z("Home")] >> 16 > 0x80 and ca[z("Home")] & 0xFF < 0x40  # leaf red
+    assert ca[z("ScrollLock")] & 0xFF > 0x60  # white middle column
+    assert layer.cycle_ms == 12000

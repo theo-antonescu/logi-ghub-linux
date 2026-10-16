@@ -133,7 +133,7 @@ class Layer:
         """Time until the layer repeats: one period, one per flag (flags) or the frames' total (frames)."""
         if self.effect == "frames":
             return max(50, sum(ms for _c, ms, _tr in self.timeline()))
-        n = max(1, len(self.flags)) if self.effect in ("flags", "flag_stream") else 1
+        n = max(1, len(self.flags)) if self.effect in ("flags", "flag_stream", "raise") else 1
         return max(50, self.period_ms) * n
 
     def timeline(self) -> list[tuple[dict, int, str]]:
@@ -210,7 +210,7 @@ def _noise(zone: int, slot: int) -> float:
     return (h >> 8) / float(1 << 24)
 
 
-def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: float, cycle: float) -> int:
+def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: float, cycle: float, name: str = "") -> int:
     k = len(colors)
     phase = cycle % 1.0
     angle = (math.atan2(fy - 0.5, fx - 0.5) / (2 * math.pi)) % 1.0
@@ -242,17 +242,25 @@ def _shape_effect(layer: "Layer", colors: list[int], zone: int, fx: float, fy: f
         level = max(beat(0.0), 0.8 * beat(0.22))
         return scale(base, layer.floor + (1 - layer.floor) * level)
     if layer.effect == "raise":
+        if layer.flags:  # a different small flag each time: Romania, then Canada (leaf on the centre key), ...
+            which = layer.flags[int(cycle) % len(layer.flags)]
+            base = FLAG_ROWS.get(which, FLAG_ROWS["romania"])[min(2, int(fx * 3))]
+            if which == "canada" and name == "Home":
+                base = FLAG_RED
         height = 1 - fy  # 0 at the bottom row
         # the sky behind the flag: the background colour, paler towards the top
         sky = 0 if layer.background is None else lerp(layer.background, 0xFFFFFF, (1 - fy) * 0.55)
         wave = 0.5 + 0.5 * math.sin(2 * math.pi * (phase * 3 - fx * 0.5))
+        if layer.flags:  # a few steps only, so it stays small enough to store next to big animations
+            wave = round(wave * 3) / 3
         flag = scale(base, layer.floor + (1 - layer.floor) * wave)
+        steps = (lambda k: round(k * 3) / 3) if layer.flags else (lambda k: k)
         if phase < 0.45:  # rising: each row fades in as the top edge of the flag passes it
             soft = 0.3
             edge = phase / 0.45 * (1 + soft)
-            return lerp(sky, flag, min(1.0, max(0.0, (edge - height) / soft)))
+            return lerp(sky, flag, steps(min(1.0, max(0.0, (edge - height) / soft))))
         if phase > 0.85:  # fading back into the sky
-            return lerp(flag, sky, (phase - 0.85) / 0.15)
+            return lerp(flag, sky, steps((phase - 0.85) / 0.15))
         return flag
     return base
 
@@ -262,9 +270,13 @@ FLAG_RED, FLAG_WHITE = 0xFF0010, 0xFFFFFF
 def _romania(fx: float, fy: float, name: str = "") -> int:
     """Blue, yellow, red, the yellow stripe centred on the space bar (the middle of the typing area)."""
     centre, _stem = _canada_anchor()
+    centre += ROMANIA_SHIFT
     if fx < centre - 1 / 6:
         return 0x0030FF
     return 0xFFC800 if fx <= centre + 1 / 6 else 0xFF0010
+
+
+ROMANIA_SHIFT = 1 / 17.25  # one key to the right of the space bar's centre, so red is a column narrower
 
 
 # The maple leaf, key by key (F5, 5 6 7 8, R T Y U I, F G H J, stem B): at one LED per key a
@@ -392,7 +404,7 @@ class DesignRenderer:
                 elif layer.effect == "frames":
                     c = _frames_effect(layer, self.names[zone], t)
                 elif layer.effect in ("pinwheel", "comet", "turning", "sparkle", "heartbeat", "raise"):
-                    c = _shape_effect(layer, colors, zone, fx, fy, cycle)
+                    c = _shape_effect(layer, colors, zone, fx, fy, cycle, self.names[zone])
                 else:
                     c = colors[0]
                 out[zone] = c
