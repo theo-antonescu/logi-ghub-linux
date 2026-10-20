@@ -6,6 +6,9 @@
 # per-device nodes the logitech-hidpp driver creates behind a receiver).
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"
 
+# Virtual Logitech devices made with uhid (src/logi_ghub/emulator), which have no USB parent.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", KERNELS=="0003:046D:*", TAG+="uaccess"
+
 # Logitech devices paired over Bluetooth.
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", KERNELS=="0005:046D:*", TAG+="uaccess"
 

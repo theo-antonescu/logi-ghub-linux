@@ -1,3 +1,5 @@
 # Temporary: lets the logged-in user pass the G915 X (USB) into a VM to record G HUB.
 # Remove when done: sudo rm /etc/udev/rules.d/71-logi-ghub-capture.rules
 SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c357", TAG+="uaccess"
+# The emulated G502 X (python3 -m logi_ghub.emulator --backend gadget mouse), see docs/emulator.md.
+SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c098", TAG+="uaccess"

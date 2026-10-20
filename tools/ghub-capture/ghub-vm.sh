@@ -2,8 +2,8 @@
 # Record what Logitech G HUB sends to a device, from a Windows VM on Linux.
 #
 #   ./ghub-vm.sh install Win11.iso   create the VM and boot the Windows installer
-#   ./ghub-vm.sh capture [046d:c357] start Windows with the device passed through; all its USB
-#                                    traffic is written to ~/ghub-vm/capture-<time>.pcap
+#   ./ghub-vm.sh capture [046d:c357 ...]  start Windows with the devices passed through; each one's
+#                                    USB traffic is written to ~/ghub-vm/capture-<time>-<pid>.pcap
 #   ./ghub-vm.sh start               start Windows without passing any device through
 #   ./ghub-vm.sh delete              remove the VM (captures are kept)
 #
@@ -15,7 +15,6 @@ VM="${GHUB_VM_DIR:-$HOME/ghub-vm}"
 DISK="$VM/windows.qcow2"
 VARS="$VM/OVMF_VARS.fd"
 CODE=/usr/share/OVMF/OVMF_CODE_4M.ms.fd
-DEVICE="${2:-046d:c357}"   # G915 X LIGHTSPEED TKL over USB
 
 tpm() {
     mkdir -p "$VM/tpm"
@@ -51,10 +50,18 @@ install)
     run -drive id=cd,file="$ISO",if=none,media=cdrom,readonly=on -device ide-cd,drive=cd,bus=ahci.1,bootindex=0
     ;;
 capture)
-    vid="${DEVICE%%:*}"; pid="${DEVICE##*:}"
-    out="$VM/capture-$(date +%Y%m%dT%H%M%S).pcap"
-    echo "Recording USB traffic of $DEVICE to $out"
-    run -device usb-host,bus=xhci.0,vendorid=0x$vid,productid=0x$pid,pcap="$out"
+    shift
+    [ $# -gt 0 ] || set -- 046d:c357   # G915 X LIGHTSPEED TKL over USB
+    stamp=$(date +%Y%m%dT%H%M%S)
+    devices=""
+    for d in "$@"; do
+        vid="${d%%:*}"; pid="${d##*:}"
+        out="$VM/capture-$stamp-$pid.pcap"
+        echo "Recording USB traffic of $d to $out"
+        devices="$devices -device usb-host,bus=xhci.0,vendorid=0x$vid,productid=0x$pid,pcap=$out"
+    done
+    # shellcheck disable=SC2086
+    run $devices
     ;;
 start)
     run

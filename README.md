@@ -47,7 +47,8 @@ The installer puts the app in `~/.local/share/logi-ghub-linux/venv`, links
 "Logitech G devices" launcher. `./scripts/install.sh --uninstall` removes it.
 
 To try it without installing: `PYTHONPATH=src python3 -m logi_ghub.gui.app`.
-Add `--fake` to the app or CLI to use simulated devices.
+Add `--fake` to the app or CLI to use simulated devices. To test against devices that look real to
+the system (and to G HUB in a Windows VM), see [docs/emulator.md](docs/emulator.md).
 
 ## On-board memory vs. host mode
 
