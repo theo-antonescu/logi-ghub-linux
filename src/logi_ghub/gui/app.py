@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 import traceback
+from pathlib import Path
 
 import gi
 
@@ -93,6 +94,7 @@ class DevicePane(Gtk.Box):
         self.onboard_effects: list[str] = []
         self.stored_profiles = []
         self.stored_active: int | None = None
+        self.modular_report: dict | None = None
         self.animator = None
         self.hz_values: list[int] = []
         self.paint_color = 0xFF0000
@@ -288,6 +290,8 @@ class DevicePane(Gtk.Box):
     def build_profiles(self):
         self.page_reset("profiles")
         dev = self.dev
+        if dev.key.lower() == "046d:c364" and dev.has(0x8102):
+            self.build_modular_profiles()
         if dev.onboard and self.slots:
             mode = {1: "on-board", 2: "host (software)"}.get(self.mode, "?")
             g = self.add_group("profiles", Adw.PreferencesGroup(
@@ -359,6 +363,94 @@ class DevicePane(Gtk.Box):
             g.add(r)
 
         self.install_actions()
+
+    def build_modular_profiles(self):
+        """PRO X2 RAPID: read hardware slots without touching their flash."""
+        g = self.add_group("profiles", Adw.PreferencesGroup(
+            title="PRO X2 RAPID — hardware profiles",
+            description="Stored on the keyboard; Fn+1 / Fn+2 / Fn+3. Read-only until safe writes are verified."))
+        actions = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        refresh = Gtk.Button(label="Read / refresh", tooltip_text="Read profiles 1–3 directly from the keyboard")
+        refresh.connect("clicked", lambda *_: self.read_modular_profiles())
+        actions.append(refresh)
+        export = Gtk.Button(label="Export JSON", tooltip_text="Save a private, read-only known-tag export",
+                            sensitive=self.modular_report is not None)
+        export.connect("clicked", lambda *_: self.export_modular_profiles())
+        actions.append(export)
+        g.set_header_suffix(actions)
+        if self.modular_report is None:
+            g.add(Adw.ActionRow(title="Profiles not yet read",
+                                subtitle="Click Read / refresh. No background driver or flash writes are required."))
+            return
+
+        report = self.modular_report
+        active = report.get("active_before")
+        from ..features.modular_profiles import profile_overview
+        for item in profile_overview(report):
+            slot = item["slot"]
+            title = f"Profile {slot}: {item['name'] or '(unnamed)'}"
+            if slot == active:
+                title += "  •  active"
+            actuation = item.get("global_actuation_mm")
+            mm = f"{actuation:.2f} mm" if actuation is not None else "unavailable"
+            rate = item.get("wired_report_rate_hz")
+            hz = f"{rate} Hz stored" if rate is not None else "rate unavailable"
+            row = Adw.ExpanderRow(title=title, subtitle=f"Actuation {mm} · {hz}")
+            tags = report["profiles"][str(slot)]
+            for key, label in (
+                ("rapid_trigger_enabled", "Rapid Trigger"),
+                ("key_priority_enabled", "Key Priority"),
+                ("immersive_lighting_enabled", "Immersive Lighting"),
+            ):
+                value = tags.get(key, {}).get("decoded", {}).get("enabled")
+                value_text = "On" if value is True else "Off" if value is False else "Unavailable"
+                row.add_row(Adw.ActionRow(title=label, subtitle=value_text))
+            per_key = tags.get("per_key_rapid_trigger", {}).get("decoded", {})
+            row.add_row(Adw.ActionRow(title="Per-key Rapid Trigger settings",
+                                      subtitle=f"{per_key.get('count', 0)} control entries (stored; may be inactive)"))
+            pairs = tags.get("key_priority_pairs", {}).get("decoded", {})
+            row.add_row(Adw.ActionRow(title="Key Priority pairs",
+                                      subtitle=str(pairs.get("count", "unavailable"))))
+            color = item.get("lighting_rgb_candidate")
+            if color:
+                cr = Adw.ActionRow(title="Lighting colour (candidate)",
+                                   subtitle=f"{color.upper()} · effect format not fully validated")
+                chip = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(), sensitive=False)
+                chip.set_rgba(int_to_rgba(int(color.lstrip("#"), 16)))
+                cr.add_suffix(chip)
+                row.add_row(cr)
+            error_count = sum(v.get("status") != "ok" for v in tags.values())
+            row.add_row(Adw.ActionRow(title="Known tag export",
+                                      subtitle=f"{len(tags) - error_count}/{len(tags)} tags read; missing tags not backed up"))
+            g.add(row)
+        g.add(Adw.ActionRow(title="Read-only hardware integration",
+                            subtitle="This is not a restorable full flash/RGB backup. Hardware write support is disabled."))
+
+    def read_modular_profiles(self):
+        """Use the worker thread for the ~192 on-device HID++ requests."""
+        from ..features.modular_profiles import export_profiles
+
+        def done(report):
+            self.modular_report = report
+            self.build_profiles()
+            self.toast(f"Read {len(report['profiles'])} hardware profiles — no writes")
+
+        run_async(lambda: export_profiles(self.dev), done, self.fail)
+
+    def export_modular_profiles(self):
+        """Export the cached read, with owner-only permissions."""
+        if self.modular_report is None:
+            return
+        from ..features.modular_profiles import sanitized_summary, save_private_json
+        report = self.modular_report
+        path = Path.home() / ".local" / "state" / "logi-ghub-linux" / "pro-x2-rapid-known-tags.json"
+
+        def work():
+            save_private_json(path, report)
+            save_private_json(path.with_name("pro-x2-rapid-known-tags-summary.json"), sanitized_summary(report))
+            return str(path)
+
+        run_async(work, lambda where: self.toast(f"Export saved: {where}"), self.fail)
 
     def install_actions(self):
         group = Gio.SimpleActionGroup()
