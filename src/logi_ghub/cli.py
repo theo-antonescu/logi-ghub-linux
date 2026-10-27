@@ -173,6 +173,31 @@ def _print_profile(dev: LogiDevice, p: ob.OnboardProfile, active: int) -> None:
 def cmd_onboard(args) -> None:
     dev = _device(args)
     sub = args.onboard_cmd
+    if sub == "modular":
+        from .features.modular_profiles import (
+            export_profiles, profile_overview, sanitized_summary, save_private_json,
+        )
+
+        report = export_profiles(dev, slots=(args.slot,) if args.slot else (1, 2, 3))
+        for entry in profile_overview(report):
+            active = " [active]" if entry["slot"] == report["active_before"] else ""
+            rate = entry["wired_report_rate_hz"]
+            actuation = entry["global_actuation_mm"]
+            print(f"Profile {entry['slot']}: {entry['name'] or '(unnamed)'}{active}")
+            print(f"  USB report rate: {rate if rate is not None else '?'} Hz (stored, not measured)")
+            print(f"  Actuation point: {actuation if actuation is not None else '?'} mm")
+            print(f"  Rapid Trigger: {entry['rapid_trigger']}  Key Priority: {entry['key_priority']}")
+            print(f"  Priority pairs: {entry['key_priority_pairs']}")
+        failures = report["statistics"]["tag_failures"]
+        print(f"Known tags: {report['statistics']['tags_attempted'] - failures}/"
+              f"{report['statistics']['tags_attempted']} read; this is not a restorable flash/RGB backup")
+        if args.out:
+            path = Path(args.out).expanduser()
+            save_private_json(path, report)
+            summary = path.with_name(path.stem + "_summary.json")
+            save_private_json(summary, sanitized_summary(report))
+            print(f"Private known-tag export: {path}; redacted summary: {summary}")
+        return
     if dev.onboard is None and dev.has(F.PROFILE_MANAGEMENT) and sub == "select":  # newer keyboards (G915 X)
         from .features.profile_fs import ProfileFS
 
@@ -443,6 +468,9 @@ def main(argv: list[str] | None = None) -> int:
     osp = p.add_subparsers(dest="onboard_cmd", required=True)
     q = osp.add_parser("show")
     q.add_argument("--slot", type=int)
+    q = osp.add_parser("modular", help="Read PRO X2 RAPID modular on-board profiles (no writes)")
+    q.add_argument("--slot", type=int, choices=(1, 2, 3))
+    q.add_argument("--out", help="write a private known-tag JSON export and redacted summary")
     q = osp.add_parser("backup")
     q.add_argument("--out")
     q = osp.add_parser("restore")
