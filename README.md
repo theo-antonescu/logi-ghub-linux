@@ -13,8 +13,8 @@ USB cable), and a corded **G600** MMO mouse.
 |---|---|---|
 | Battery, firmware info | yes | yes |
 | DPI stages, DPI shift, report rate | yes, on-board and host mode | n/a |
-| Button remapping (keys, media keys, mouse buttons, DPI/profile functions, G-Shift layer) | yes, on-board and host mode | not yet (see Limitations) |
-| Macros | host mode (played by the service, with repeat modes); on-board is experimental | not yet |
+| Button remapping (keys, media keys, mouse buttons, DPI/profile functions, G-Shift layer) | yes, on-board and host mode | key assignments in host mode (new, untested on the keyboard yet); not on-board |
+| Macros | host mode (played by the service, with repeat modes); on-board is experimental | host mode, on any key |
 | Lighting: zone effects, per-key colours, brightness, your own colour sequences | the LIGHTSPEED model has no RGB | yes, host mode |
 | On-board profile slots: read, edit, enable, switch, back up, restore | yes | n/a (uses a newer, undocumented feature) |
 
@@ -74,7 +74,8 @@ Like G HUB, there are two ways a profile can run:
 * **Sensitivity**: up to 5 DPI stages, the default stage, DPI shift, polling rate.
   The play button tries a DPI immediately.
 * **Assignments**: every button and its G-Shift second function. Keystrokes can
-  be captured by pressing them.
+  be captured by pressing them. On a keyboard: click a key on the picture to give
+  it another key, a shortcut, a media key, a mouse button, a macro, or nothing.
 * **Macros**: write steps as text or record them by typing. Macros can play
   once, repeat while the button is held, or repeat until pressed again, with a
   pause between repeats and keys held down the whole time (for example: hold
@@ -117,6 +118,9 @@ logi-ghub-cli -d keyboard lighting sequence ff0000,ffa000,00ff00,0000ff --step 7
 logi-ghub-cli -d keyboard lighting release
 logi-ghub-cli -d mouse profile import --slot 1 --name Gaming
 logi-ghub-cli -d mouse profile activate Gaming     # host mode via logi-ghubd ('none' to stop)
+logi-ghub-cli -d keyboard profile keys Work CapsLock=key:LeftCtrl Pause=consumer:Play/Pause F12=key:Ctrl+Alt+T
+logi-ghub-cli -d keyboard profile keys Work --reset F12
+logi-ghub-cli -d keyboard profile activate Work
 logi-ghub-cli probe --out data/devices             # read-only feature dump for new models
 ```
 
@@ -125,6 +129,23 @@ Action syntax: `default`, `none`, `mouse:N`, `key:Ctrl+Shift+T`,
 DPI shift (sniper), Cycle profile, G-Shift, Scroll left, ...), `macro:NAME`.
 Macro syntax: comma separated `Ctrl+C`, `50ms`, `down:Shift`, `up:Shift`,
 `"text"`, `mouse:1`, `consumer:Mute`.
+
+## Keyboard key assignments
+
+The G915 X keeps its key assignments in an undocumented feature (0x1B05), so
+for now keys are reassigned on the computer, the way keyd does it: while
+`logi-ghubd` runs a keyboard profile that has key assignments, it takes the
+keyboard's input device for itself (`EVIOCGRAB`), types every other key
+unchanged through a virtual keyboard, and performs the assigned action for the
+rest. Nothing is written to the keyboard, and when the service stops the
+keyboard types normally again. Caps/Num Lock lights are passed back to the
+keyboard. **Holding Backspace + Esc + Enter together always gives the normal
+keyboard back** (until the profile is saved or switched on again).
+
+This needs read access to the keyboard's `/dev/input/event*` node, which the
+udev rule grants to the logged-in user (re-run `./scripts/install.sh --udev`
+after updating). Keys handled inside the keyboard (brightness, game mode, the
+logo) send nothing to the computer and can't be reassigned.
 
 ## How it works
 
@@ -156,12 +177,13 @@ it can run next to Solaar; just don't let both drive the same device's lighting.
 
 ## Limitations
 
-* **G915 X key remapping, G-keys and on-board keyboard profiles**: this
-  keyboard has no G-key feature (0x8010) and no 0x8100 memory. It exposes newer
-  features (0x1B05 Full Key Customization, 0x8101 Profile Management) that are
-  not publicly documented and not implemented by Solaar or libratbag yet.
-  Lighting works; key remapping is future work (it needs packet captures of
-  G HUB on Windows).
+* **G915 X on-board key assignments and keyboard profiles**: this keyboard has
+  no G-key feature (0x8010) and no 0x8100 memory. It exposes newer features
+  (0x1B05 Full Key Customization, 0x8101 Profile Management) that are not
+  publicly documented (not in Logitech's published HID++ feature list) and not
+  implemented by Solaar or libratbag. Key assignments work in host mode (see
+  above); storing them in the keyboard needs packet captures of G HUB on
+  Windows (`tools/ghub-capture`).
 * On-board macros are experimental: the byte format comes from libratbag and
   has not been confirmed on the G502 X yet. Each is limited to one memory sector
   (about 80 key events) and plays once; repeat modes need host mode.

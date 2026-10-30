@@ -8,7 +8,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import __version__, keys, profiles
+from . import __version__, keyremap, keys, profiles
 from .actions import Action, parse_action
 from .device import LogiDevice, find_devices, select_device
 from .features import lighting
@@ -410,6 +410,35 @@ def cmd_profile(args) -> None:
         for change in profiles.write_to_onboard(memory, prof, args.slot, dev.binding_count()):
             print(" -", change)
         return
+    if sub == "keys":
+        dev = _device(args)
+        try:
+            prof = profiles.load_profile(dev.key, args.name)
+        except FileNotFoundError:
+            prof = profiles.Profile(name=args.name, device=dev.key)
+            print(f"new profile '{args.name}'")
+        for name in args.reset or []:
+            keyremap.key_code(name)
+            prof.key_actions.pop(keyremap.canonical(name), None)
+        if args.clear:
+            prof.key_actions.clear()
+        for spec in args.assign:
+            name, _, action = spec.partition("=")
+            name = keyremap.canonical(name.strip())
+            keyremap.key_code(name)  # check the name
+            a = parse_action(action)
+            if a.kind == "macro" and not prof.macro(a.macro):
+                raise ValueError(f"no macro {a.macro!r} in profile '{prof.name}'")
+            prof.key_actions[name] = a
+        if args.assign or args.reset or args.clear:
+            profiles.save_profile(prof)
+        if not prof.key_actions:
+            print("no key assignments (every key types normally)")
+        for name, a in sorted(prof.key_actions.items()):
+            print(f"  {name:<14} {a.label()}")
+        if prof.key_actions and profiles.get_active().get(dev.key) != prof.name:
+            print(f"run it with: logi-ghub-cli -d {dev.key} profile activate '{prof.name}' (needs logi-ghubd)")
+        return
     if sub == "activate":
         dev = _device(args)
         if args.name.lower() in ("none", "onboard"):
@@ -505,6 +534,11 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("name")
     q.add_argument("--slot", type=int, required=True)
     q.add_argument("--yes", action="store_true")
+    q = psp.add_parser("keys", help="keyboard key assignments, run by the daemon in host mode")
+    q.add_argument("name", help="profile (created if it doesn't exist)")
+    q.add_argument("assign", nargs="*", help="KEY=ACTION, e.g. CapsLock=key:LeftCtrl F1=consumer:Mute Pause=macro:hello")
+    q.add_argument("--reset", action="append", metavar="KEY", help="give a key back its normal function")
+    q.add_argument("--clear", action="store_true", help="remove all key assignments")
     q = psp.add_parser("activate", help="have the daemon run a profile in host mode ('none' to stop)")
     q.add_argument("name")
 
